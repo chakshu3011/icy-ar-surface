@@ -8,9 +8,9 @@ import { SkeletonUtils } from 'three-stdlib';
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
   PENGUIN: 0.15,
-  CRATE: 0.0015,       // Your exact working scale
+  CRATE: 0.0015,       
   ITEMS: {
-    "Blue Soda": 0.4,   // Scale tuned for visibility
+    "Blue Soda": 0.4,   
     "Green Soda": 0.4,  
     "Plastic Bag": 0.35 
   }
@@ -27,7 +27,6 @@ const MODELS = {
   }
 };
 
-// Preload assets to speed up cache initialization
 useGLTF.preload(MODELS.PENGUIN);
 useGLTF.preload(MODELS.ENVIRONMENT);
 useGLTF.preload(MODELS.CRATE);
@@ -47,7 +46,7 @@ function XRManager({ session }) {
   return null;
 }
 
-// --- 3RD PERSON PENGUIN TRACKER ---
+// --- UNDERWATER-STYLE OVER THE SHOULDER TRACKING ---
 function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PENGUIN);
@@ -68,20 +67,20 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
     mixer.update(delta); 
     if (!group.current) return;
     
-    // Position the penguin exactly 1.2 meters in front of the phone camera frame
-    const targetPosition = new THREE.Vector3(0, -0.4, -1.2).applyMatrix4(camera.matrixWorld);
+    // Exact mathematical positioning from the beautiful underwater camera attachment
+    const targetPosition = new THREE.Vector3(0, -0.4, -1.3);
+    targetPosition.applyMatrix4(camera.matrixWorld);
+    
     const distanceMoved = group.current.position.distanceTo(targetPosition);
+    group.current.position.lerp(targetPosition, delta * 5.5);
     
-    group.current.position.lerp(targetPosition, delta * 8.0);
-    
-    // Keep penguin facing perfectly forward into the scenery
-    const lookTarget = new THREE.Vector3(0, -0.4, -10).applyMatrix4(camera.matrixWorld);
+    // FIXED: Making the penguin look perfectly ahead alongside your phone's heading vector
+    const lookTarget = new THREE.Vector3(camera.position.x, group.current.position.y, camera.position.z);
     group.current.lookAt(lookTarget);
 
-    // Pass the real-time position back up to the game manager for proximity spawning
     onPenguinUpdate(group.current.position.clone());
 
-    // Footstep Sound Engine
+    // Footstep Sound Engine integration
     if (distanceMoved > 0.01) {
       if (footstepsAudio.current && footstepsAudio.current.paused) {
         footstepsAudio.current.play().catch(() => {});
@@ -95,7 +94,8 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
 
   return (
     <group ref={group} visible={visible}>
-      <group rotation={[0, -Math.PI / 2 + Math.PI, 0]}>
+      {/* FIXED: Neutralized sideways rotation offset to force chick to point dead ahead */}
+      <group rotation={[0, 0, 0]}>
         <primitive object={clonedScene} scale={SCALES.PENGUIN} />
       </group>
     </group>
@@ -146,7 +146,7 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  const penguinPosRef = useRef(new THREE.Vector3(0, -0.4, -1.2));
+  const penguinPosRef = useRef(new THREE.Vector3(0, -0.4, -1.3));
   const ambienceAudio = useRef(null);
   const chirpAudio = useRef(null);
   const collectAudio = useRef(null);
@@ -195,18 +195,17 @@ export default function App() {
     return () => clearInterval(timer);
   }, [gameState, timeLeft, xrSession]);
 
-  // Spawns items in a comfortable radius directly around where the penguin currently is
   const generateLocalItems = useCallback((centerPos) => {
     const itemTypes = Object.keys(MODELS.ITEMS);
     const generated = Array.from({ length: 5 }).map((_, i) => {
       const angle = Math.random() * Math.PI * 2;
-      const radius = 1.0 + Math.random() * 2.0; // Spawns within 1-3 meters of the player
+      const radius = 1.2 + Math.random() * 2.0; 
       return {
         id: Date.now() + i,
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          centerPos.y, // Snaps perfectly to the penguin's vertical line
+          centerPos.y + 0.05, // Raised slightly above landscape geometries to guarantee hit detection
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -243,7 +242,6 @@ export default function App() {
       setCarriedItem(null);
       setTimeLeft(60); 
       
-      // Seed initial local items based on starting location
       generateLocalItems(penguinPosRef.current);
       setGameState('PLAYING');
 
@@ -294,7 +292,6 @@ export default function App() {
         dropAudio.current.play().catch(() => {});
       }
 
-      // Drop down one replacement item nearby
       const itemTypes = Object.keys(MODELS.ITEMS);
       const angle = Math.random() * Math.PI * 2;
       const radius = 1.2 + Math.random() * 2.0;
@@ -303,7 +300,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
           penguinPosRef.current.x + Math.cos(angle) * radius,
-          penguinPosRef.current.y,
+          penguinPosRef.current.y + 0.05,
           penguinPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
@@ -319,7 +316,6 @@ export default function App() {
       
       {gameState === 'PLAYING' && (
         <>
-          {/* Layout UI container optimized for notches/safe areas */}
           <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', left: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '12px 16px', borderRadius: '12px', color: '#fff', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ fontWeight: 'bold', fontSize: '11px', color: '#94a3b8', marginBottom: '4px', letterSpacing: '0.5px' }}>CLEANUP PROGRESS</div>
             <div style={{ color: '#38bdf8', fontSize: '22px', fontWeight: 'bold' }}>{score} XP</div>
@@ -347,7 +343,7 @@ export default function App() {
           <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
           <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Antarctic Habitat Cleanup</p>
           
-          <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255,255,255,0.2)', backdropFilter: 'blur(10px)' }}>
+          <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
             <strong>Your Mission:</strong><br />
             Walk around your room to guide the penguin. Tap the plastic waste on the ice to collect it, then drop it inside the Red Sled! Clean up the surface in 60 seconds.
           </div>
@@ -376,18 +372,16 @@ export default function App() {
         
         {gameState === 'PLAYING' && (
           <>
-            {/* The heavy map environment is isolated into an asynchronous Suspense boundary */}
             <React.Suspense fallback={null}>
               <Environment />
             </React.Suspense>
             
             <PlayerPenguin visible={true} footstepsAudio={footstepsAudio} onPenguinUpdate={updatePenguinPosition} />
             
-            {/* Base camp target sled spawned closely in front of the default landscape center */}
             <ConservationCrate position={[0, -0.4, -2.0]} onDrop={handleDrop} />
             
             {items.map((item) => (
-              <GarbageItem 
+              <GameItem 
                 key={item.id} 
                 type={item.type} 
                 position={item.pos} 
