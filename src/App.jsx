@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, useAnimations } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import { Interactive } from '@react-three/xr'; 
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
@@ -46,55 +46,99 @@ function XRManager({ session }) {
   return null;
 }
 
-// --- UNDERWATER-STYLE OVER THE SHOULDER TRACKING ---
+// --- OVER-THE-SHOULDER & MOVEMENT ENGINE ---
 function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PENGUIN);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   const mixer = useMemo(() => new THREE.AnimationMixer(clonedScene), [clonedScene]);
   const { camera } = useThree();
+  
+  // Movement & Animation tracking
+  const prevCamPos = useRef(new THREE.Vector3());
+  const actions = useRef({});
+  const animStateRef = useRef('idle');
 
   useEffect(() => {
     if (visible && animations && animations.length > 0) {
-      mixer.clipAction(animations[0]).reset().play();
-    } else {
-      mixer.stopAllAction();
+      // Smartly find animations by name, fallback to indices if naming is different
+      const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
+      const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
+
+      if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
+      if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
+
+      // Fallback for unlabeled animations
+      if (!idleClip && !walkClip) {
+        actions.current.idle = mixer.clipAction(animations[0]);
+        if (animations.length > 1) {
+          actions.current.walk = mixer.clipAction(animations[1]);
+        }
+      }
+
+      // Start by playing idle
+      if (actions.current.idle) actions.current.idle.play();
+      else if (actions.current.walk) actions.current.walk.play();
     }
+    return () => mixer.stopAllAction();
   }, [visible, mixer, animations]);
 
   useFrame((_, delta) => {
-    if (!visible) return;
+    if (!visible || !group.current) return;
     mixer.update(delta); 
-    if (!group.current) return;
     
-    // Exact mathematical positioning from the beautiful underwater camera attachment
+    // 1. POSITIONING: Attach to back/front of camera
     const targetPosition = new THREE.Vector3(0, -0.4, -1.3);
     targetPosition.applyMatrix4(camera.matrixWorld);
+    group.current.position.lerp(targetPosition, delta * 8.0); // Fast lerp so it keeps up
     
-    const distanceMoved = group.current.position.distanceTo(targetPosition);
-    group.current.position.lerp(targetPosition, delta * 5.5);
-    
-    // FIXED: Making the penguin look perfectly ahead alongside your phone's heading vector
+    // 2. ORIENTATION: Look exactly where the player is looking
     const lookTarget = new THREE.Vector3(camera.position.x, group.current.position.y, camera.position.z);
     group.current.lookAt(lookTarget);
 
     onPenguinUpdate(group.current.position.clone());
 
-    // Footstep Sound Engine integration
-    if (distanceMoved > 0.01) {
-      if (footstepsAudio.current && footstepsAudio.current.paused) {
-        footstepsAudio.current.play().catch(() => {});
-      }
-    } else {
-      if (footstepsAudio.current && !footstepsAudio.current.paused) {
-        footstepsAudio.current.pause();
+    // 3. MOVEMENT DETECTION: Check if player's phone actually moved
+    const camSpeed = camera.position.distanceTo(prevCamPos.current);
+    const isMoving = camSpeed > 0.0015; // Very sensitive to small physical steps
+    const nextAnimState = isMoving ? 'walk' : 'idle';
+
+    if (animStateRef.current !== nextAnimState) {
+      animStateRef.current = nextAnimState;
+      
+      if (nextAnimState === 'walk') {
+        // Player started moving
+        if (actions.current.walk && actions.current.idle) {
+          actions.current.walk.reset().fadeIn(0.2).play();
+          actions.current.idle.fadeOut(0.2);
+        } else if (actions.current.idle) { 
+           // Hack if model only has 1 animation: speed it up to look like walking
+           actions.current.idle.setEffectiveTimeScale(1.5);
+        }
+        if (footstepsAudio.current && footstepsAudio.current.paused) {
+          footstepsAudio.current.play().catch(()=>{});
+        }
+      } else {
+        // Player stopped moving
+        if (actions.current.idle && actions.current.walk) {
+          actions.current.idle.reset().fadeIn(0.2).play();
+          actions.current.walk.fadeOut(0.2);
+        } else if (actions.current.idle) {
+           // Slow it down to simulate idle breathing
+           actions.current.idle.setEffectiveTimeScale(0.5);
+        }
+        if (footstepsAudio.current && !footstepsAudio.current.paused) {
+          footstepsAudio.current.pause();
+        }
       }
     }
+    
+    // Update camera tracker for next frame
+    prevCamPos.current.copy(camera.position);
   });
 
   return (
     <group ref={group} visible={visible}>
-      {/* FIXED: Neutralized sideways rotation offset to force chick to point dead ahead */}
       <group rotation={[0, 0, 0]}>
         <primitive object={clonedScene} scale={SCALES.PENGUIN} />
       </group>
@@ -132,7 +176,7 @@ function GarbageItem({ type, position, onPickUp }) {
   const itemScale = SCALES.ITEMS[type] || 0.1;
 
   return (
-    <Interactive onSelect={() => onPickUp(type)}>
+    <Interactive onSelect={() => onPickUp(type, position)}>
       <primitive object={clonedScene} position={position} scale={itemScale} />
     </Interactive>
   );
@@ -147,6 +191,8 @@ export default function App() {
   const [xrSession, setXrSession] = useState(null);
 
   const penguinPosRef = useRef(new THREE.Vector3(0, -0.4, -1.3));
+  
+  // Audio Refs
   const ambienceAudio = useRef(null);
   const chirpAudio = useRef(null);
   const collectAudio = useRef(null);
@@ -205,7 +251,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          centerPos.y + 0.05, // Raised slightly above landscape geometries to guarantee hit detection
+          centerPos.y + 0.05, 
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -227,6 +273,7 @@ export default function App() {
         }).catch(() => {});
       }
     };
+    
     warmUp(collectAudio);
     warmUp(dropAudio);
     warmUp(footstepsAudio);
@@ -284,6 +331,7 @@ export default function App() {
     setTimeout(() => {
       setScore((s) => s + 20); 
       setCarriedItem(null);
+      
       if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
         window.navigator.vibrate([30, 50, 30]); 
       }
@@ -292,6 +340,7 @@ export default function App() {
         dropAudio.current.play().catch(() => {});
       }
 
+      // Generate a new item so there's always something to find
       const itemTypes = Object.keys(MODELS.ITEMS);
       const angle = Math.random() * Math.PI * 2;
       const radius = 1.2 + Math.random() * 2.0;
@@ -310,6 +359,13 @@ export default function App() {
   const updatePenguinPosition = useCallback((newPos) => {
     penguinPosRef.current.copy(newPos);
   }, []);
+
+  // FIXED: Play again reset logic
+  const handlePlayAgain = () => {
+    setGameState('MENU');
+    setScore(0);
+    setTimeLeft(60);
+  };
 
   return (
     <div id="xr-overlay" style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', background: gameState === 'PLAYING' ? 'transparent' : '#f8fafc' }}>
@@ -371,24 +427,21 @@ export default function App() {
         <XRManager session={xrSession} />
         
         {gameState === 'PLAYING' && (
-          <>
-            <React.Suspense fallback={null}>
-              <Environment />
-            </React.Suspense>
-            
+          // FIXED: One Suspense wrap for ALL 3D items!
+          <React.Suspense fallback={null}>
+            <Environment />
             <PlayerPenguin visible={true} footstepsAudio={footstepsAudio} onPenguinUpdate={updatePenguinPosition} />
-            
             <ConservationCrate position={[0, -0.4, -2.0]} onDrop={handleDrop} />
             
             {items.map((item) => (
-              <GameItem 
+              <GarbageItem 
                 key={item.id} 
                 type={item.type} 
                 position={item.pos} 
                 onPickUp={(type) => handlePickUp(type, item.id)} 
               />
             ))}
-          </>
+          </React.Suspense>
         )}
       </Canvas>
     </div>
