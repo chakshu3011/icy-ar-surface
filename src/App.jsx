@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, useAnimations } from '@react-three/drei';
-import { Interactive } from '@react-three/xr'; // CRITICAL FIX: Imported from xr, not drei
+import { useGLTF, Interactive } from '@react-three/xr'; // Critical AR imports
+import { useAnimations } from '@react-three/drei';
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
-// Preload your exact assets from the screenshot
-useGLTF.preload("/models/penguin_chick.glb");
-useGLTF.preload("/models/ice_world.glb");
-useGLTF.preload("/models/crate.glb");
-useGLTF.preload("/models/blue_soda_can.glb");
-useGLTF.preload("/models/green_soda_can.glb");
-useGLTF.preload("/models/plastic_bag.glb");
+// --- 1. CONFIGURATION & SCALES ---
+// Tweak these numbers if your cans are still too small or the bag is too big!
+const SCALES = {
+  PENGUIN: 0.15,
+  CRATE: 0.0015,     // Your exact fix
+  ITEMS: {
+    "Blue Soda": 0.5, // Upped from 0.08
+    "Green Soda": 0.5, // Upped from 0.08
+    "Plastic Bag": 0.08 // Kept the same since it was visible
+  }
+};
 
 const MODELS = {
   PENGUIN: "/models/penguin_chick.glb",
@@ -23,6 +27,12 @@ const MODELS = {
     "Plastic Bag": "/models/plastic_bag.glb"
   }
 };
+
+// Preload assets to avoid mid-game stuttering
+Object.values(MODELS).forEach(path => {
+  if (typeof path === "string") useGLTF.preload(path);
+  else Object.values(path).forEach(p => useGLTF.preload(p));
+});
 
 function XRManager({ session }) {
   const { gl } = useThree();
@@ -36,7 +46,8 @@ function XRManager({ session }) {
   return null;
 }
 
-function PlayerPenguin({ visible }) {
+// --- 2. 3RD PERSON PENGUIN LOGIC ---
+function PlayerPenguin({ visible, footstepsAudio }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PENGUIN);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
@@ -56,18 +67,36 @@ function PlayerPenguin({ visible }) {
     mixer.update(delta); 
     if (!group.current) return;
     
-    const targetPosition = new THREE.Vector3(0, -0.3, -1.2);
-    targetPosition.applyMatrix4(camera.matrixWorld);
-    group.current.position.lerp(targetPosition, delta * 5.5);
+    // Position the penguin 1.2 meters in front of the phone, and down near the floor
+    const targetPosition = new THREE.Vector3(0, -0.4, -1.2).applyMatrix4(camera.matrixWorld);
     
-    const lookTarget = new THREE.Vector3(camera.position.x, group.current.position.y, camera.position.z);
+    // Calculate if the penguin is physically moving to trigger footsteps
+    const distanceMoved = group.current.position.distanceTo(targetPosition);
+    
+    // Smoothly drag the penguin to the target
+    group.current.position.lerp(targetPosition, delta * 8.0);
+    
+    // Make the penguin face perfectly forward (away from the user)
+    const lookTarget = new THREE.Vector3(0, -0.4, -10).applyMatrix4(camera.matrixWorld);
     group.current.lookAt(lookTarget);
+
+    // Audio Physics: Play footsteps only when actively moving
+    if (distanceMoved > 0.01) {
+      if (footstepsAudio.current && footstepsAudio.current.paused) {
+        footstepsAudio.current.play().catch(() => {});
+      }
+    } else {
+      if (footstepsAudio.current && !footstepsAudio.current.paused) {
+        footstepsAudio.current.pause();
+      }
+    }
   });
 
   return (
     <group ref={group} visible={visible}>
+      {/* Depending on the original model, this rotation might be needed to flip it forward */}
       <group rotation={[0, -Math.PI / 2 + Math.PI, 0]}>
-        <primitive object={clonedScene} scale={0.15} />
+        <primitive object={clonedScene} scale={SCALES.PENGUIN} />
       </group>
     </group>
   );
@@ -79,7 +108,6 @@ function Environment({ visible }) {
 
   return (
     <group visible={visible}>
-      {/* Bright lighting for a snowy surface */}
       <ambientLight intensity={1.2} color="#ffffff" />
       <directionalLight position={[5, 10, 5]} intensity={1.5} color="#fffcf2" castShadow />
       <primitive object={clonedScene} position={[0, -1.4, -1.5]} scale={[1.2, 1.2, 1.2]} />
@@ -94,7 +122,7 @@ function ConservationCrate({ visible, position, onDrop }) {
   return (
     <group visible={visible}>
       <Interactive onSelect={onDrop}>
-        <primitive object={clonedScene} position={position} scale={0.005} />
+        <primitive object={clonedScene} position={position} scale={SCALES.CRATE} />
       </Interactive>
     </group>
   );
@@ -104,10 +132,12 @@ function GarbageItem({ type, position, onPickUp }) {
   const { scene } = useGLTF(MODELS.ITEMS[type]);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   
+  // Pulls the precise scale from our dictionary at the top
+  const itemScale = SCALES.ITEMS[type] || 0.1;
+
   return (
     <Interactive onSelect={() => onPickUp(type)}>
-      {/* Increased scale slightly for visibility on the floor */}
-      <primitive object={clonedScene} position={position} scale={0.08} />
+      <primitive object={clonedScene} position={position} scale={itemScale} />
     </Interactive>
   );
 }
@@ -120,11 +150,11 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  // Audio refs mapped to your exact files
   const ambienceAudio = useRef(null);
   const chirpAudio = useRef(null);
   const collectAudio = useRef(null);
   const dropAudio = useRef(null);
+  const footstepsAudio = useRef(null);
 
   useEffect(() => {
     ambienceAudio.current = new Audio("/audios/antarctic_ambience.mp3");
@@ -140,9 +170,14 @@ export default function App() {
     dropAudio.current = new Audio("/audios/drop.mp3");
     dropAudio.current.volume = 0.8;
 
+    footstepsAudio.current = new Audio("/audios/snow_footsteps.mp3");
+    footstepsAudio.current.loop = true;
+    footstepsAudio.current.volume = 0.6;
+
     return () => {
       if (ambienceAudio.current) ambienceAudio.current.pause();
       if (chirpAudio.current) chirpAudio.current.pause();
+      if (footstepsAudio.current) footstepsAudio.current.pause();
     };
   }, []);
 
@@ -154,6 +189,8 @@ export default function App() {
       setGameState('GAMEOVER');
       
       if (ambienceAudio.current) ambienceAudio.current.pause();
+      if (footstepsAudio.current) footstepsAudio.current.pause();
+      
       if (chirpAudio.current) {
         chirpAudio.current.currentTime = 0;
         chirpAudio.current.play().catch(e => console.log("Audio play blocked:", e));
@@ -170,19 +207,19 @@ export default function App() {
       return;
     }
 
-    // Audio Warmup
-    if (collectAudio.current) {
-      collectAudio.current.play().then(() => {
-        collectAudio.current.pause();
-        collectAudio.current.currentTime = 0;
-      }).catch(e => console.log("Warmup blocked:", e));
-    }
-    if (dropAudio.current) {
-      dropAudio.current.play().then(() => {
-        dropAudio.current.pause();
-        dropAudio.current.currentTime = 0;
-      }).catch(e => console.log("Warmup blocked:", e));
-    }
+    // Audio Warmup (Critical for Safari/iOS)
+    const warmUp = (audioRef) => {
+      if (audioRef.current) {
+        audioRef.current.play().then(() => {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+        }).catch(e => console.log("Warmup blocked:", e));
+      }
+    };
+
+    warmUp(collectAudio);
+    warmUp(dropAudio);
+    warmUp(footstepsAudio);
 
     try {
       const session = await navigator.xr.requestSession('immersive-ar', {
@@ -195,11 +232,11 @@ export default function App() {
       setCarriedItem(null);
       setTimeLeft(60); 
       
-      // Initial Spawn of 5 items scattered around
       const itemTypes = Object.keys(MODELS.ITEMS);
       const initialItems = Array.from({ length: 5 }).map((_, i) => ({
         id: Date.now() + i,
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
+        // Spawns items randomly around the floor
         pos: [(Math.random() - 0.5) * 6, -1.0, (Math.random() - 0.5) * 6 - 2]
       }));
       setItems(initialItems);
@@ -214,6 +251,7 @@ export default function App() {
       session.addEventListener('end', () => {
         setXrSession(null);
         if (ambienceAudio.current) ambienceAudio.current.pause();
+        if (footstepsAudio.current) footstepsAudio.current.pause();
         setGameState(prev => prev === 'PLAYING' ? 'MENU' : prev);
       });
     } catch (e) {
@@ -223,8 +261,7 @@ export default function App() {
   };
 
   const handlePickUp = useCallback((type, id) => {
-    // Prevent picking up if already carrying something
-    if (carriedItem) return;
+    if (carriedItem) return; // Prevent dual-wielding garbage
 
     setTimeout(() => {
       setCarriedItem(type);
@@ -241,22 +278,21 @@ export default function App() {
   }, [carriedItem]);
 
   const handleDrop = useCallback(() => {
-    // Do nothing if hands are empty
     if (!carriedItem) return;
 
     setTimeout(() => {
-      setScore((s) => s + 20); // Reward for cleanup
+      setScore((s) => s + 20); 
       setCarriedItem(null);
 
       if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
-        window.navigator.vibrate([30, 50, 30]); // Distinct drop vibration
+        window.navigator.vibrate([30, 50, 30]); 
       }
       if (dropAudio.current) {
         dropAudio.current.currentTime = 0;
         dropAudio.current.play().catch(e => console.log("Audio blocked:", e));
       }
 
-      // Spawn a new item somewhere else to keep the game going
+      // Respawn a new item to keep the hunt going
       const itemTypes = Object.keys(MODELS.ITEMS);
       setItems(prev => [...prev, { 
         id: Date.now(), 
@@ -275,26 +311,23 @@ export default function App() {
       
       {gameState === 'PLAYING' && (
         <>
-          {/* Top Left: Score Tracker */}
           <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '15px', borderRadius: '12px', color: '#fff', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ fontWeight: 'bold', fontSize: '12px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>CLEANUP PROGRESS</div>
             <div style={{ color: '#38bdf8', fontSize: '24px', fontWeight: 'bold' }}>{score} XP</div>
           </div>
 
-          {/* Top Right: Timer */}
           <div style={{ position: 'absolute', top: '20px', right: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '12px 24px', borderRadius: '12px', textAlign: 'center', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ color: timeLeft <= 10 ? '#ef4444' : '#fff', fontSize: '28px', fontWeight: 'bold' }}>
               0:{timeLeft.toString().padStart(2, '0')}
             </div>
           </div>
 
-          {/* Bottom Center: Inventory HUD */}
           <div style={{ position: 'absolute', bottom: '40px', left: '50%', transform: 'translateX(-50%)', zIndex: 10, background: carriedItem ? 'rgba(16, 185, 129, 0.9)' : 'rgba(15, 23, 42, 0.85)', padding: '15px 30px', borderRadius: '30px', color: '#fff', fontFamily: 'sans-serif', textAlign: 'center', transition: 'background 0.3s ease', border: '2px solid rgba(255,255,255,0.2)', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
               {carriedItem ? `Carrying: ${carriedItem}` : "Hands Empty"}
             </div>
             <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
-              {carriedItem ? "Tap the Red Sled to drop off!" : "Tap garbage on the ice to pick it up!"}
+              {carriedItem ? "Tap the Red Sled to drop off!" : "Walk to the garbage and tap to pick it up!"}
             </div>
           </div>
         </>
@@ -352,9 +385,8 @@ export default function App() {
         {gameState === 'PLAYING' && (
           <>
             <Environment visible={true} />
-            <PlayerPenguin visible={true} />
+            <PlayerPenguin visible={true} footstepsAudio={footstepsAudio} />
             
-            {/* The Sled sits slightly in front and to the side as Base Camp */}
             <ConservationCrate visible={true} position={[-1.5, -1.0, -2.5]} onDrop={handleDrop} />
             
             {items.map((item) => (
