@@ -8,12 +8,12 @@ import { SkeletonUtils } from 'three-stdlib';
 // --- 1. CONFIGURATION & SCALES ---
 const SCALES = {
   PLAYER: 0.25,        
-  CRATE: 0.009,        
+  CRATE: 0.012,        // Bit bigger (was 0.009)
   ITEMS: {
-    "Blue Soda": 0.30,      
-    "Green Soda": 0.05,     
+    "Blue Soda": 0.40,   // Bit bigger (was 0.30)
+    "Green Soda": 0.04,  // Bit smaller (was 0.05)
     "Plastic Bag": 0.15,
-    "Plastic Bottle": 0.02  
+    "Plastic Bottle": 0.02 
   }
 };
 
@@ -63,12 +63,14 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
   useEffect(() => {
     if (animations && animations.length > 0) {
+      // Look for the exact animation names provided: pose (idle) and walking (walk)
       const idleClip = animations.find(a => a.name === 'pose' || a.name.toLowerCase() === 'pose');
       const walkClip = animations.find(a => a.name === 'walking' || a.name.toLowerCase() === 'walking');
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
+      // Fallback
       if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
@@ -85,12 +87,15 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     mixer.update(delta); 
     if (!group.current) return;
     
+    // Position 1.5 meters directly ahead of the phone camera frame
     const targetPosition = new THREE.Vector3(0, -0.4, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     targetPosition.y = 0.001; 
     
+    // Smooth follow logic, slowed down slightly for man.glb follow speed
     group.current.position.lerp(targetPosition, delta * 4.0);
     
+    // Look ahead alongside phone heading
     const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     cameraForward.y = 0; 
     cameraForward.normalize();
@@ -99,6 +104,7 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
     onPlayerUpdate(group.current.position.clone());
 
+    // Movement animation triggers
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.002; 
     const nextAnimState = isMoving ? 'walk' : 'idle';
@@ -109,6 +115,7 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
       if (nextAnimState === 'walk') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
+          // Slow down leg movement so it matches phone speed
           actions.current.walk.setEffectiveTimeScale(0.8); 
           actions.current.idle.fadeOut(0.2);
         } 
@@ -141,7 +148,7 @@ function Environment() {
   
   const clonedFloor = useMemo(() => {
     const clone = scene.clone();
-    // CRITICAL FIX: Make the floor invisible to the raycaster so it doesn't eat your taps!
+    // CRITICAL FIX: Make the environment model invisible to raycasts so taps pierce through it!
     clone.traverse(child => {
       if (child.isMesh) child.raycast = () => null; 
     });
@@ -151,7 +158,7 @@ function Environment() {
   return (
     <group>
       <ambientLight intensity={1.4} color="#ffffff" />
-      <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" />
+      <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" castShadow />
       <primitive object={clonedFloor} position={[0, -1.4, 0]} scale={[1, 1, 1]} />
     </group>
   );
@@ -163,6 +170,7 @@ function ConservationCrate({ position, onDrop }) {
 
   return (
     <group position={position}>
+      {/* Tap the huge invisible hitbox in AR to trigger interaction */}
       <Interactive onSelect={onDrop}>
         <mesh position={[0, 0.4, 0]}>
           <boxGeometry args={[1.5, 1.5, 1.5]} />
@@ -181,6 +189,7 @@ function GarbageItem({ type, position, onPickUp }) {
 
   return (
     <group position={position}>
+      {/* Tap the invisible hitbox in AR to trigger interaction */}
       <Interactive onSelect={onPickUp}>
         <mesh position={[0, 0.2, 0]}>
           <boxGeometry args={[0.8, 0.8, 0.8]} />
@@ -437,6 +446,7 @@ export default function App() {
 
         {gameState === 'GAMEOVER' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
+            {/* Optimized stacked text for GAMEOVER heading */}
             <h1 style={{ fontSize: '36px', lineHeight: '1.1', marginBottom: '15px', color: '#38bdf8', textShadow: '0 2px 10px rgba(56, 189, 248, 0.4)' }}>
               MISSION<br/>COMPLETE!
             </h1>
@@ -447,6 +457,7 @@ export default function App() {
               <div style={{ fontSize: '14px', color: '#cbd5e1' }}>Pieces of Plastic Secured</div>
             </div>
 
+            {/* Combined end state UI with FINISH/MENU button */}
             <div style={{ display: 'flex', gap: '15px', flexDirection: 'column', width: '100%', maxWidth: '250px' }}>
               <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '14px 20px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
                 PLAY AGAIN
@@ -458,6 +469,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Thank You State with explicit CLOSE/EXIT button */}
         {gameState === 'THANKYOU' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#0f172a', color: '#fff', fontFamily: 'sans-serif', padding: '30px', textAlign: 'center', pointerEvents: 'auto' }}>
             <h1 style={{ fontSize: '38px', marginBottom: '20px', color: '#4ade80' }}>Habitat Secured!</h1>
@@ -466,6 +478,7 @@ export default function App() {
             </p>
             <div style={{ width: '60px', height: '4px', background: '#4ade80', borderRadius: '2px', opacity: 0.5, marginBottom: '40px' }}></div>
             
+            {/* Added standard Close/Exit button to main menu */}
             <button onClick={handlePlayAgain} style={{ background: 'transparent', border: '2px solid #4ade80', color: '#fff', padding: '12px 35px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
               MAIN MENU
             </button>
