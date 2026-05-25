@@ -10,10 +10,10 @@ const SCALES = {
   PLAYER: 0.25,        
   CRATE: 0.009,        
   ITEMS: {
-    "Blue Soda": 0.30,      // Bumped up for better visibility
-    "Green Soda": 0.05,     // Shrank down from the giant size
+    "Blue Soda": 0.30,      
+    "Green Soda": 0.05,     
     "Plastic Bag": 0.15,
-    "Plastic Bottle": 0.02  // Added your precise scale
+    "Plastic Bottle": 0.02  
   }
 };
 
@@ -25,7 +25,7 @@ const MODELS = {
     "Blue Soda": "/models/blue_soda_can.glb",
     "Green Soda": "/models/green_soda_can.glb",
     "Plastic Bag": "/models/plastic_bag.glb",
-    "Plastic Bottle": "/models/plastic_bottle.glb" // Successfully added to the engine!
+    "Plastic Bottle": "/models/plastic_bottle.glb" 
   }
 };
 
@@ -138,7 +138,15 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
 function Environment() {
   const { scene } = useGLTF(MODELS.ICE_FLOOR);
-  const clonedFloor = useMemo(() => scene.clone(), [scene]);
+  
+  const clonedFloor = useMemo(() => {
+    const clone = scene.clone();
+    // CRITICAL FIX: Make the floor invisible to the raycaster so it doesn't eat your taps!
+    clone.traverse(child => {
+      if (child.isMesh) child.raycast = () => null; 
+    });
+    return clone;
+  }, [scene]);
 
   return (
     <group>
@@ -189,7 +197,7 @@ export default function App() {
   const [gameState, setGameState] = useState('MENU'); 
   const [items, setItems] = useState([]);
   const [carriedItem, setCarriedItem] = useState(null);
-  const [itemsCleaned, setItemsCleaned] = useState(0); // Renamed and refactored from "score"
+  const [itemsCleaned, setItemsCleaned] = useState(0); 
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
@@ -292,7 +300,7 @@ export default function App() {
       
       playerPosRef.current.set(0, 0, -1.5);
       setXrSession(session);
-      setItemsCleaned(0); // Reset cleanup count
+      setItemsCleaned(0); 
       setCarriedItem(null);
       setTimeLeft(60); 
       
@@ -332,11 +340,11 @@ export default function App() {
     }, 0);
   }, [carriedItem]);
 
-  const handleDrop = () => {
+  const handleDrop = useCallback(() => {
     if (!carriedItem) return;
 
     setTimeout(() => {
-      setItemsCleaned((count) => count + 1); // Add +1 tangible item removed
+      setItemsCleaned((count) => count + 1); 
       setCarriedItem(null);
       
       if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
@@ -360,7 +368,7 @@ export default function App() {
         ]
       }]);
     }, 0);
-  };
+  }, [carriedItem]);
 
   const updatePlayerPosition = useCallback((newPos) => {
     playerPosRef.current.copy(newPos);
@@ -429,16 +437,37 @@ export default function App() {
 
         {gameState === 'GAMEOVER' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
-            <h1 style={{ fontSize: '48px', marginBottom: '10px', color: '#38bdf8' }}>MISSION COMPLETE!</h1>
+            <h1 style={{ fontSize: '36px', lineHeight: '1.1', marginBottom: '15px', color: '#38bdf8', textShadow: '0 2px 10px rgba(56, 189, 248, 0.4)' }}>
+              MISSION<br/>COMPLETE!
+            </h1>
             
-            <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '30px 50px', borderRadius: '16px', margin: '20px 0 35px 0', border: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '25px 40px', borderRadius: '16px', margin: '15px 0 30px 0', border: '1px solid rgba(255,255,255,0.1)' }}>
               <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Total Cleaned</div>
-              <div style={{ fontSize: '56px', fontWeight: '900', color: '#4ade80', marginBottom: '10px' }}>{itemsCleaned}</div>
+              <div style={{ fontSize: '50px', fontWeight: '900', color: '#4ade80', marginBottom: '8px' }}>{itemsCleaned}</div>
               <div style={{ fontSize: '14px', color: '#cbd5e1' }}>Pieces of Plastic Secured</div>
             </div>
 
-            <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '16px 45px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
-              PLAY AGAIN
+            <div style={{ display: 'flex', gap: '15px', flexDirection: 'column', width: '100%', maxWidth: '250px' }}>
+              <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '14px 20px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
+                PLAY AGAIN
+              </button>
+              <button onClick={() => setGameState('THANKYOU')} style={{ background: 'transparent', border: '2px solid #64748b', color: '#f8fafc', padding: '14px 20px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
+                FINISH
+              </button>
+            </div>
+          </div>
+        )}
+
+        {gameState === 'THANKYOU' && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#0f172a', color: '#fff', fontFamily: 'sans-serif', padding: '30px', textAlign: 'center', pointerEvents: 'auto' }}>
+            <h1 style={{ fontSize: '38px', marginBottom: '20px', color: '#4ade80' }}>Habitat Secured!</h1>
+            <p style={{ fontSize: '18px', color: '#cbd5e1', maxWidth: '450px', lineHeight: '1.6', marginBottom: '40px' }}>
+              Emperor penguins rely on clean, stable sea ice to raise their chicks. By removing plastic debris from the floe, you helped keep ICY's home pristine and safe. Thank you for playing!
+            </p>
+            <div style={{ width: '60px', height: '4px', background: '#4ade80', borderRadius: '2px', opacity: 0.5, marginBottom: '40px' }}></div>
+            
+            <button onClick={handlePlayAgain} style={{ background: 'transparent', border: '2px solid #4ade80', color: '#fff', padding: '12px 35px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
+              MAIN MENU
             </button>
           </div>
         )}
