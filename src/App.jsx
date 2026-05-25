@@ -94,7 +94,7 @@ function ConservationCrate({ visible, position, onDrop }) {
   return (
     <group visible={visible}>
       <Interactive onSelect={onDrop}>
-        <primitive object={clonedScene} position={position} scale={0.5} />
+        <primitive object={clonedScene} position={position} scale={0.005} />
       </Interactive>
     </group>
   );
