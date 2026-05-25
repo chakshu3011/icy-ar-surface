@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, useProgress } from '@react-three/drei';
-import { Interactive } from '@react-three/xr'; 
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
 // --- 1. CONFIGURATION & SCALES ---
 const SCALES = {
-  PLAYER: 0.25,        // Shrank the man down to a realistic AR size
+  PLAYER: 0.25,        
   CRATE: 0.009,        
   ITEMS: {
-    "Blue Soda": 0.15,  // Shrank the giant sodas down to floor-trash size
+    "Blue Soda": 0.15,   
     "Green Soda": 0.15,  
     "Plastic Bag": 0.15 
   }
@@ -60,14 +59,12 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
   useEffect(() => {
     if (animations && animations.length > 0) {
-      // Look for the exact animation names you provided
       const idleClip = animations.find(a => a.name === 'pose' || a.name.toLowerCase() === 'pose');
       const walkClip = animations.find(a => a.name === 'walking' || a.name.toLowerCase() === 'walking');
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
-      // Fallback just in case
       if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
@@ -88,7 +85,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     targetPosition.applyMatrix4(camera.matrixWorld);
     targetPosition.y = 0.001; 
     
-    // Slowed down the follow speed from 7.0 to 4.0 so it feels more like walking than snapping
     group.current.position.lerp(targetPosition, delta * 4.0);
     
     const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -100,7 +96,7 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     onPlayerUpdate(group.current.position.clone());
 
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
-    const isMoving = camSpeed > 0.002; // Slightly higher threshold to prevent "twitch walking"
+    const isMoving = camSpeed > 0.002; 
     const nextAnimState = isMoving ? 'walk' : 'idle';
 
     if (animStateRef.current !== nextAnimState) {
@@ -109,7 +105,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
       if (nextAnimState === 'walk') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
-          // Slow down the leg movement so he doesn't look like he's sprinting
           actions.current.walk.setEffectiveTimeScale(0.8); 
           actions.current.idle.fadeOut(0.2);
         } 
@@ -150,37 +145,26 @@ function Environment() {
   );
 }
 
-function ConservationCrate({ position, onDrop }) {
+// Interactive wrappers completely removed. We rely on physical distance now.
+function ConservationCrate({ position }) {
   const { scene } = useGLTF(MODELS.CRATE);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
 
   return (
     <group position={position}>
-      <Interactive onSelect={onDrop}>
-        <mesh position={[0, 0.4, 0]}>
-          <boxGeometry args={[1.5, 1.5, 1.5]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-        <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
-      </Interactive>
+      <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
     </group>
   );
 }
 
-function GarbageItem({ type, position, onPickUp }) {
+function GarbageItem({ type, position }) {
   const { scene } = useGLTF(MODELS.ITEMS[type]);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   const itemScale = SCALES.ITEMS[type] || 0.1;
 
   return (
     <group position={position}>
-      <Interactive onSelect={onPickUp}>
-        <mesh position={[0, 0.2, 0]}>
-          <boxGeometry args={[0.8, 0.8, 0.8]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        </mesh>
-        <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
-      </Interactive>
+      <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
     </group>
   );
 }
@@ -195,7 +179,16 @@ export default function App() {
   const [xrSession, setXrSession] = useState(null);
 
   const { active: assetsAreLoading, progress: assetProgress } = useProgress();
+  
+  // Real-time tracking refs for the Proximity-Tap engine
   const playerPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
+  const itemsRef = useRef([]);
+  const carriedItemRef = useRef(null);
+  const handlePickUpRef = useRef();
+  const handleDropRef = useRef();
+
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => { carriedItemRef.current = carriedItem; }, [carriedItem]);
   
   const ambienceAudio = useRef(null);
   const winAudio = useRef(null);
@@ -266,6 +259,88 @@ export default function App() {
     setItems(generated);
   }, []);
 
+  const handlePickUp = useCallback((type, id) => {
+    setCarriedItem(type);
+    setItems((prev) => prev.filter(item => item.id !== id));
+    if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
+      window.navigator.vibrate(40);
+    }
+    if (collectAudio.current) {
+      collectAudio.current.currentTime = 0;
+      collectAudio.current.play().catch(() => {});
+    }
+  }, []);
+
+  const handleDrop = useCallback(() => {
+    setScore((s) => s + 20); 
+    setCarriedItem(null);
+    
+    if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
+      window.navigator.vibrate([30, 50, 30]); 
+    }
+    if (dropAudio.current) {
+      dropAudio.current.currentTime = 0;
+      dropAudio.current.play().catch(() => {});
+    }
+
+    const itemTypes = Object.keys(MODELS.ITEMS);
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 1.2 + Math.random() * 1.8;
+    setItems(prev => [...prev, { 
+      id: Date.now(), 
+      type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
+      pos: [
+        playerPosRef.current.x + Math.cos(angle) * radius,
+        0.02,
+        playerPosRef.current.z + Math.sin(angle) * radius
+      ]
+    }]);
+  }, []);
+
+  // Update refs to point to the newest functions
+  useEffect(() => {
+    handlePickUpRef.current = handlePickUp;
+    handleDropRef.current = handleDrop;
+  }, [handlePickUp, handleDrop]);
+
+  // --- THE PROXIMITY-TAP ENGINE ---
+  useEffect(() => {
+    if (!xrSession) return;
+
+    const onScreenTap = () => {
+      const currentPos = playerPosRef.current;
+      
+      if (carriedItemRef.current) {
+        // If carrying an item, check if we are near the Crate (2.5 meter radius)
+        const cratePos = new THREE.Vector3(0, -0.4, -2.0);
+        if (currentPos.distanceTo(cratePos) < 2.5) {
+          handleDropRef.current();
+        }
+      } else {
+        // If hands are empty, check if we are near any garbage (2.0 meter radius)
+        let closestItem = null;
+        let minDistance = 2.0; 
+
+        itemsRef.current.forEach(item => {
+          const itemPos = new THREE.Vector3(item.pos[0], item.pos[1], item.pos[2]);
+          const dist = currentPos.distanceTo(itemPos);
+          if (dist < minDistance) {
+            minDistance = dist;
+            closestItem = item;
+          }
+        });
+
+        if (closestItem) {
+          handlePickUpRef.current(closestItem.type, closestItem.id);
+        }
+      }
+    };
+
+    // Native WebXR tap listener - perfectly stable, works anywhere on the screen
+    xrSession.addEventListener('select', onScreenTap);
+    return () => xrSession.removeEventListener('select', onScreenTap);
+  }, [xrSession]);
+
   const initiateXRSession = async () => {
     if (!navigator.xr) {
       setGameState('PLAYING');
@@ -317,52 +392,6 @@ export default function App() {
     }
   };
 
-  const handlePickUp = useCallback((type, id) => {
-    if (carriedItem) return; 
-
-    setTimeout(() => {
-      setCarriedItem(type);
-      setItems((prev) => prev.filter(item => item.id !== id));
-      if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
-        window.navigator.vibrate(40);
-      }
-      if (collectAudio.current) {
-        collectAudio.current.currentTime = 0;
-        collectAudio.current.play().catch(() => {});
-      }
-    }, 0);
-  }, [carriedItem]);
-
-  const handleDrop = () => {
-    if (!carriedItem) return;
-
-    setTimeout(() => {
-      setScore((s) => s + 20); 
-      setCarriedItem(null);
-      
-      if (typeof window !== "undefined" && window.navigator && window.navigator.vibrate) {
-        window.navigator.vibrate([30, 50, 30]); 
-      }
-      if (dropAudio.current) {
-        dropAudio.current.currentTime = 0;
-        dropAudio.current.play().catch(() => {});
-      }
-
-      const itemTypes = Object.keys(MODELS.ITEMS);
-      const angle = Math.random() * Math.PI * 2;
-      const radius = 1.2 + Math.random() * 1.8;
-      setItems(prev => [...prev, { 
-        id: Date.now(), 
-        type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
-        pos: [
-          playerPosRef.current.x + Math.cos(angle) * radius,
-          0.02,
-          playerPosRef.current.z + Math.sin(angle) * radius
-        ]
-      }]);
-    }, 0);
-  };
-
   const updatePlayerPosition = useCallback((newPos) => {
     playerPosRef.current.copy(newPos);
   }, []);
@@ -372,15 +401,7 @@ export default function App() {
   };
 
   return (
-    <div id="xr-overlay" style={{ 
-      width: '100vw', 
-      height: '100vh', 
-      position: 'absolute', 
-      inset: 0,
-      overflow: 'hidden', 
-      background: gameState === 'PLAYING' ? 'transparent' : '#f8fafc',
-      pointerEvents: gameState === 'PLAYING' ? 'none' : 'auto' 
-    }}>
+    <div id="xr-overlay" style={{ width: '100vw', height: '100vh', position: 'relative' }}>
       
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
         
@@ -412,7 +433,7 @@ export default function App() {
                 {carriedItem ? `Carrying: ${carriedItem}` : "Hands Empty"}
               </div>
               <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
-                {carriedItem ? "Tap the Crate to drop off!" : "Look around and tap garbage items!"}
+                {carriedItem ? "Walk near the Crate and tap anywhere to drop off!" : "Walk near garbage and tap anywhere to collect!"}
               </div>
             </div>
           </>
@@ -427,7 +448,7 @@ export default function App() {
               <strong>Your Mission:</strong><br />
               1. Scan the floor with your camera for 3-5 seconds.<br/>
               2. Walk around your room to guide your character.<br/>
-              3. Tap plastic waste to collect it, then drop it inside the Crate!
+              3. Walk near plastic waste and <strong>tap the screen</strong> to collect it, then drop it off near the Blue Crate!
             </div>
 
             <button onClick={initiateXRSession} style={{ background: '#fff', border: 'none', color: '#0284c7', padding: '16px 40px', fontSize: '18px', fontWeight: '900', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', textTransform: 'uppercase' }}>
@@ -450,20 +471,20 @@ export default function App() {
         )}
       </div>
 
+      {/* CANVAS LAYER */}
       <Canvas style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: gameState === 'PLAYING' ? 'auto' : 'none' }} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
         <XRManager session={xrSession} />
         <React.Suspense fallback={null}>
           <group visible={gameState === 'PLAYING'}>
             <Environment />
             <PlayerCharacter footstepsAudio={footstepsAudio} onPlayerUpdate={updatePlayerPosition} />
-            <ConservationCrate position={[0, -0.4, -2.0]} onDrop={handleDrop} />
+            <ConservationCrate position={[0, -0.4, -2.0]} />
             
             {items.map((item) => (
               <GarbageItem 
                 key={item.id} 
                 type={item.type} 
                 position={item.pos} 
-                onPickUp={() => handlePickUp(item.type, item.id)} 
               />
             ))}
           </group>
