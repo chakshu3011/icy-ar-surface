@@ -6,31 +6,35 @@ import { SkeletonUtils } from 'three-stdlib';
 
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
-  PENGUIN: 0.38,       
-  CRATE: 0.009,        
+  PLAYER: 1.0, // <-- Adjust this if your man.glb is too big or too small
+  CRATE: 0.01,        
   ITEMS: {
     "Blue Soda": 1.3,   
-    "Green Soda": 1.3,  
-    "Plastic Bag": 0.15 
+    "Green Soda": 0.1,  
+    "Plastic Bag": 0.1,
+    "Plastic Bottle": 0.1
   }
 };
 
 const MODELS = {
-  PENGUIN: "/models/penguin_chick.glb",
+  PLAYER: "/models/man.glb",
+  ICE_FLOOR: "/models/ice_floor.glb",
   CRATE: "/models/crate.glb",
   ITEMS: {
     "Blue Soda": "/models/blue_soda_can.glb",
     "Green Soda": "/models/green_soda_can.glb",
-    "Plastic Bag": "/models/plastic_bag.glb"
+    "Plastic Bag": "/models/plastic_bag.glb",
+    "Plastic Bottle": "/models/plastic_bottle.glb"
   }
 };
 
-useGLTF.preload(MODELS.PENGUIN);
+useGLTF.preload(MODELS.PLAYER);
+useGLTF.preload(MODELS.ICE_FLOOR);
 useGLTF.preload(MODELS.CRATE);
 useGLTF.preload(MODELS.ITEMS["Blue Soda"]);
 useGLTF.preload(MODELS.ITEMS["Green Soda"]);
 useGLTF.preload(MODELS.ITEMS["Plastic Bag"]);
-
+useGLTF.preload(MODELS.ITEMS["Plastic Bottle"]);
 function XRManager({ session }) {
   const { gl } = useThree();
   useEffect(() => {
@@ -44,21 +48,21 @@ function XRManager({ session }) {
 }
 
 // --- MOTION & BEHAVIOUR ENGINE ---
-function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
+function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
   const group = useRef();
-  const { scene, animations } = useGLTF(MODELS.PENGUIN);
+  const { scene, animations } = useGLTF(MODELS.PLAYER);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   const mixer = useMemo(() => new THREE.AnimationMixer(clonedScene), [clonedScene]);
   const { camera } = useThree();
   
   const prevCamPos = useRef(new THREE.Vector3());
   const actions = useRef({});
-  const animStateRef = useRef('idle');
+  const animStateRef = useRef('pose');
 
   useEffect(() => {
     if (visible && animations && animations.length > 0) {
-      const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
-      const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
+      const idleClip = animations.find(a => a.name.toLowerCase().includes('pose'));
+      const walkClip = animations.find(a => a.name.toLowerCase().includes('walking') || a.name.toLowerCase().includes('running'));
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
@@ -99,17 +103,17 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
       group.current.lookAt(lookTarget);
     }
 
-    onPenguinUpdate(group.current.position.clone());
+    onPlayerUpdate(group.current.position.clone());
 
     // Movement animation tracking
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.0015; 
-    const nextAnimState = isMoving ? 'walk' : 'idle';
+    const nextAnimState = isMoving ? 'walking' : 'pose';
 
     if (animStateRef.current !== nextAnimState) {
       animStateRef.current = nextAnimState;
       
-      if (nextAnimState === 'walk') {
+      if (nextAnimState === 'walking') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
           actions.current.idle.fadeOut(0.2);
@@ -137,44 +141,33 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
 
   return (
     <group ref={group} visible={visible}>
-      <primitive object={clonedScene} scale={SCALES.PENGUIN} />
+      <primitive object={clonedScene} scale={SCALES.PLAYER} />
     </group>
   );
 }
 
-// GUARANTEED 100% FLAT ENVIRONMENT SURFACE
+// NEW SOLID ICE FLOOR ENVIRONMENT
 function Environment() {
+  const { scene } = useGLTF(MODELS.ICE_FLOOR);
+  const clonedFloor = useMemo(() => SkeletonUtils.clone(scene), [scene]);
+
   return (
     <group>
       <ambientLight intensity={1.4} color="#ffffff" />
       <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" />
       
-      {/* Dynamic programmatic perfectly flat ice floor disk */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.001, 0]}>
-        <circleGeometry args={[30, 32]} />
-        <meshStandardMaterial 
-          color="#e0f2fe" 
-          roughness={0.1} 
-          metalness={0.05} 
-          transparent
-          opacity={0.5}
-        />
-      </mesh>
-      
-      {/* Navigation grid helper to show spatial progression */}
-      <gridHelper args={[60, 60, '#38bdf8', '#bae6fd']} position={[0, 0, 0]} />
+      {/* Renders your newly uploaded ice floor model */}
+      <primitive object={clonedFloor} position={[0, -0.001, 0]} scale={[1, 1, 1]} />
     </group>
   );
 }
 
-// LARGE INVISIBLE TARGET BOX FOR EASY TAPPING
 function ConservationCrate({ position, onDrop }) {
   const { scene } = useGLTF(MODELS.CRATE);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
 
   return (
     <group position={position}>
-      {/* Clear tap hitbox - 0.8 meter volume cube */}
       <mesh 
         onPointerDown={(e) => {
           e.stopPropagation(); 
@@ -189,7 +182,6 @@ function ConservationCrate({ position, onDrop }) {
   );
 }
 
-// LARGE INVISIBLE TARGET BOX FOR EASY TAPPING
 function GarbageItem({ type, position, onPickUp }) {
   const { scene } = useGLTF(MODELS.ITEMS[type]);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
@@ -197,7 +189,6 @@ function GarbageItem({ type, position, onPickUp }) {
 
   return (
     <group position={position}>
-      {/* Expanded target hitbox - 0.5 meter tap cushion */}
       <mesh 
         onPointerDown={(e) => {
           e.stopPropagation(); 
@@ -220,10 +211,10 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  const penguinPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
+  const playerPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
   
   const ambienceAudio = useRef(null);
-  const chirpAudio = useRef(null);
+  const winAudio = useRef(null);
   const collectAudio = useRef(null);
   const dropAudio = useRef(null);
   const footstepsAudio = useRef(null);
@@ -233,13 +224,14 @@ export default function App() {
     ambienceAudio.current.loop = true;
     ambienceAudio.current.volume = 0.4;
 
-    chirpAudio.current = new Audio("/audios/penguin_chirp.mp3");
-    chirpAudio.current.volume = 1.0;
+    // Swapped chirp for the win screen audio
+    winAudio.current = new Audio("/audios/win.mp3");
+    winAudio.current.volume = 1.0;
 
     collectAudio.current = new Audio("/audios/collect.mp3");
     collectAudio.current.volume = 0.8;
 
-    dropAudio.current = new Audio("/audios/drop.mp3");
+    dropAudio.current = new Audio("/audios/drop.m4a");
     dropAudio.current.volume = 0.8;
 
     footstepsAudio.current = new Audio("/audios/snow_footsteps.mp3");
@@ -248,7 +240,7 @@ export default function App() {
 
     return () => {
       if (ambienceAudio.current) ambienceAudio.current.pause();
-      if (chirpAudio.current) chirpAudio.current.pause();
+      if (winAudio.current) winAudio.current.pause();
       if (footstepsAudio.current) footstepsAudio.current.pause();
     };
   }, []);
@@ -264,9 +256,11 @@ export default function App() {
       setGameState('GAMEOVER');
       if (ambienceAudio.current) ambienceAudio.current.pause();
       if (footstepsAudio.current) footstepsAudio.current.pause();
-      if (chirpAudio.current) {
-        chirpAudio.current.currentTime = 0;
-        chirpAudio.current.play().catch(() => {});
+      
+      // Play win audio when the game finishes
+      if (winAudio.current) {
+        winAudio.current.currentTime = 0;
+        winAudio.current.play().catch(() => {});
       }
     }
     return () => clearInterval(timer);
@@ -282,7 +276,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          0.02, // Sitting cleanly on flat layout
+          0.02, 
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -315,14 +309,13 @@ export default function App() {
         domOverlay: { root: document.getElementById('xr-overlay') || document.body }
       });
       
-      // Complete state purification for restart tracking consistency
-      penguinPosRef.current.set(0, 0, -1.5);
+      playerPosRef.current.set(0, 0, -1.5);
       setXrSession(session);
       setScore(0);
       setCarriedItem(null);
       setTimeLeft(60); 
       
-      generateLocalItems(penguinPosRef.current);
+      generateLocalItems(playerPosRef.current);
       setGameState('PLAYING');
 
       if (ambienceAudio.current) {
@@ -380,16 +373,16 @@ export default function App() {
         id: Date.now(), 
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
-          penguinPosRef.current.x + Math.cos(angle) * radius,
+          playerPosRef.current.x + Math.cos(angle) * radius,
           0.02,
-          penguinPosRef.current.z + Math.sin(angle) * radius
+          playerPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
     }, 0);
   };
 
-  const updatePenguinPosition = useCallback((newPos) => {
-    penguinPosRef.current.copy(newPos);
+  const updatePlayerPosition = useCallback((newPos) => {
+    playerPosRef.current.copy(newPos);
   }, []);
 
   const handlePlayAgain = () => {
@@ -436,12 +429,12 @@ export default function App() {
       {gameState === 'MENU' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 20, background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
           <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
-          <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Antarctic Habitat Cleanup</p>
+          <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup</p>
           
           <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
             <strong>Your Mission:</strong><br />
             1. Scan the floor with your camera for 3-5 seconds to calibrate floor heights.<br/>
-            2. Walk around your room to guide the penguin.<br/>
+            2. Walk around your room to guide your character.<br/>
             3. Tap plastic waste to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
           </div>
 
@@ -453,7 +446,7 @@ export default function App() {
 
       {gameState === 'GAMEOVER' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 20, background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '48px', marginBottom: '10px', color: '#38bdf8' }}>TIME'S UP!</h1>
+          <h1 style={{ fontSize: '48px', marginBottom: '10px', color: '#38bdf8' }}>MISSION COMPLETE!</h1>
           <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '30px 50px', borderRadius: '16px', margin: '20px 0 35px 0', border: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Total Cleanup XP</div>
             <div style={{ fontSize: '56px', fontWeight: '900', color: '#4ade80' }}>{score}</div>
@@ -464,13 +457,12 @@ export default function App() {
         </div>
       )}
 
-      {/* DYNAMIC KEY SEPARATION GUARANTEES UNMOUNT/REMOUNT CYCLE PREVENTING MEMORY FREEZES */}
       {gameState === 'PLAYING' && (
         <Canvas key={xrSession ? xrSession.id : 'fresh-canvas'} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
           <XRManager session={xrSession} />
           <React.Suspense fallback={null}>
             <Environment />
-            <PlayerPenguin visible={true} footstepsAudio={footstepsAudio} onPenguinUpdate={updatePenguinPosition} />
+            <PlayerCharacter visible={true} footstepsAudio={footstepsAudio} onPlayerUpdate={updatePlayerPosition} />
             <ConservationCrate position={[0, 0, -2.0]} onDrop={handleDrop} />
             
             {items.map((item) => (
