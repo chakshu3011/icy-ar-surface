@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, useProgress } from '@react-three/drei';
+import { Interactive } from '@react-three/xr'; 
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
-  PLAYER: 1.0,        // Adjust this if your man.glb spawns too large or small
+  PLAYER: 1.0,        
   CRATE: 0.009,        
   ITEMS: {
     "Blue Soda": 1.3,   
@@ -26,7 +27,6 @@ const MODELS = {
   }
 };
 
-// Preload assets cleanly to prepare the pipeline
 useGLTF.preload(MODELS.PLAYER);
 useGLTF.preload(MODELS.ICE_FLOOR);
 useGLTF.preload(MODELS.CRATE);
@@ -47,7 +47,7 @@ function XRManager({ session }) {
 }
 
 // --- MOTION & BEHAVIOUR ENGINE ---
-function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
+function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PLAYER);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
@@ -59,14 +59,14 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
   const animStateRef = useRef('idle');
 
   useEffect(() => {
-    if (visible && animations && animations.length > 0) {
+    // Perpetual Motion Fix: Never stop the mixer to prevent 2nd-trial freezes
+    if (animations && animations.length > 0) {
       const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
       const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
-      // Ultimate safety fallback if named strings don't match
       if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
@@ -77,18 +77,15 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
       if (actions.current.idle) actions.current.idle.play();
       else if (actions.current.walk) actions.current.walk.play();
     }
-    return () => mixer.stopAllAction();
-  }, [visible, mixer, animations]);
+  }, [mixer, animations]);
 
   useFrame((_, delta) => {
-    if (!visible || !group.current) return;
     mixer.update(delta); 
+    if (!group.current) return;
     
-    // Position 1.5 meters directly ahead of the camera perspective
     const targetPosition = new THREE.Vector3(0, 0, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     
-    // Pure baseline absolute floor locking
     targetPosition.y = 0.001; 
     group.current.position.lerp(targetPosition, delta * 7.0);
     
@@ -104,7 +101,6 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
 
     onPlayerUpdate(group.current.position.clone());
 
-    // Movement animation triggers
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.0015; 
     const nextAnimState = isMoving ? 'walk' : 'idle';
@@ -139,16 +135,14 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
   });
 
   return (
-    <group ref={group} visible={visible}>
+    <group ref={group}>
       <primitive object={clonedScene} scale={SCALES.PLAYER} />
     </group>
   );
 }
 
-// FIXED ENVIRONMENT LOOP - NO MORE SKELETONUTlLS ON STATIC MODEL
 function Environment() {
   const { scene } = useGLTF(MODELS.ICE_FLOOR);
-  // Safe native Three.js cloning for a pure static asset layout
   const clonedFloor = useMemo(() => scene.clone(), [scene]);
 
   return (
@@ -166,16 +160,14 @@ function ConservationCrate({ position, onDrop }) {
 
   return (
     <group position={position}>
-      <mesh 
-        onPointerDown={(e) => {
-          e.stopPropagation(); 
-          onDrop();
-        }}
-      >
-        <boxGeometry args={[0.8, 0.8, 0.8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
+      {/* AR-Safe Interaction with large invisible hitbox */}
+      <Interactive onSelect={onDrop}>
+        <mesh position={[0, 0.4, 0]}>
+          <boxGeometry args={[1.5, 1.5, 1.5]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+        <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
+      </Interactive>
     </group>
   );
 }
@@ -187,16 +179,14 @@ function GarbageItem({ type, position, onPickUp }) {
 
   return (
     <group position={position}>
-      <mesh 
-        onPointerDown={(e) => {
-          e.stopPropagation(); 
-          onPickUp();
-        }}
-      >
-        <boxGeometry args={[0.5, 0.5, 0.5]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
+      {/* AR-Safe Interaction with large invisible hitbox */}
+      <Interactive onSelect={onPickUp}>
+        <mesh position={[0, 0.2, 0]}>
+          <boxGeometry args={[0.8, 0.8, 0.8]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+        <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
+      </Interactive>
     </group>
   );
 }
@@ -209,7 +199,6 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  // Read loading states directly from the Canvas setup
   const { active: assetsAreLoading, progress: assetProgress } = useProgress();
 
   const playerPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
@@ -225,7 +214,6 @@ export default function App() {
     ambienceAudio.current.loop = true;
     ambienceAudio.current.volume = 0.4;
 
-    // Swapped out penguin chirp for new win audio track
     winAudio.current = new Audio("/audios/win.mp3");
     winAudio.current.volume = 1.0;
 
@@ -386,9 +374,7 @@ export default function App() {
   }, []);
 
   const handlePlayAgain = () => {
-    setGameState('MENU');
-    setScore(0);
-    setTimeLeft(60);
+    window.location.reload();
   };
 
   return (
@@ -402,7 +388,6 @@ export default function App() {
       pointerEvents: gameState === 'PLAYING' ? 'none' : 'auto' 
     }}>
       
-      {/* HIGH VISIBILITY LOADING ENGINE OVERLAY */}
       {assetsAreLoading && gameState === 'PLAYING' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 100, background: '#0f172a', color: '#fff', fontFamily: 'sans-serif' }}>
           <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', letterSpacing: '1px' }}>LOADING ICE ENVIRONMENTS</div>
@@ -468,12 +453,14 @@ export default function App() {
         </div>
       )}
 
-      {gameState === 'PLAYING' && (
-        <Canvas key={xrSession ? xrSession.id : 'fresh-canvas'} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
-          <XRManager session={xrSession} />
-          <React.Suspense fallback={null}>
+      {/* FIXED: Canvas is permanently rendered so WebGL context stays alive 100% of the time */}
+      <Canvas camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
+        <XRManager session={xrSession} />
+        <React.Suspense fallback={null}>
+          {/* We control visibility using a group flag to prevent component unmounting cache bugs */}
+          <group visible={gameState === 'PLAYING'}>
             <Environment />
-            <PlayerCharacter visible={true} footstepsAudio={footstepsAudio} onPlayerUpdate={updatePlayerPosition} />
+            <PlayerCharacter footstepsAudio={footstepsAudio} onPlayerUpdate={updatePlayerPosition} />
             <ConservationCrate position={[0, 0, -2.0]} onDrop={handleDrop} />
             
             {items.map((item) => (
@@ -484,9 +471,9 @@ export default function App() {
                 onPickUp={() => handlePickUp(item.type, item.id)} 
               />
             ))}
-          </React.Suspense>
-        </Canvas>
-      )}
+          </group>
+        </React.Suspense>
+      </Canvas>
     </div>
   );
 }
