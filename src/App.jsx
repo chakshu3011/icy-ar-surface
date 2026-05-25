@@ -8,10 +8,10 @@ import { SkeletonUtils } from 'three-stdlib';
 // --- 1. CONFIGURATION & SCALES ---
 const SCALES = {
   PLAYER: 0.25,        
-  CRATE: 0.012,        // Bit bigger (was 0.009)
+  CRATE: 0.012,        
   ITEMS: {
-    "Blue Soda": 0.40,   // Bit bigger (was 0.30)
-    "Green Soda": 0.04,  // Bit smaller (was 0.05)
+    "Blue Soda": 0.40,   
+    "Green Soda": 0.04,  
     "Plastic Bag": 0.15,
     "Plastic Bottle": 0.02 
   }
@@ -53,7 +53,17 @@ function XRManager({ session }) {
 function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PLAYER);
-  const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
+  
+  const clonedScene = useMemo(() => {
+    const clone = SkeletonUtils.clone(scene);
+    // CRITICAL FIX: The character's invisible bounding box was eating your taps!
+    // This turns off tap-detection on the man so taps pass straight to the garbage.
+    clone.traverse(child => {
+      if (child.isMesh) child.raycast = () => null; 
+    });
+    return clone;
+  }, [scene]);
+
   const mixer = useMemo(() => new THREE.AnimationMixer(clonedScene), [clonedScene]);
   const { camera } = useThree();
   
@@ -63,14 +73,12 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
   useEffect(() => {
     if (animations && animations.length > 0) {
-      // Look for the exact animation names provided: pose (idle) and walking (walk)
       const idleClip = animations.find(a => a.name === 'pose' || a.name.toLowerCase() === 'pose');
       const walkClip = animations.find(a => a.name === 'walking' || a.name.toLowerCase() === 'walking');
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
-      // Fallback
       if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
@@ -87,15 +95,12 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     mixer.update(delta); 
     if (!group.current) return;
     
-    // Position 1.5 meters directly ahead of the phone camera frame
     const targetPosition = new THREE.Vector3(0, -0.4, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     targetPosition.y = 0.001; 
     
-    // Smooth follow logic, slowed down slightly for man.glb follow speed
     group.current.position.lerp(targetPosition, delta * 4.0);
     
-    // Look ahead alongside phone heading
     const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     cameraForward.y = 0; 
     cameraForward.normalize();
@@ -104,7 +109,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
     onPlayerUpdate(group.current.position.clone());
 
-    // Movement animation triggers
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.002; 
     const nextAnimState = isMoving ? 'walk' : 'idle';
@@ -115,7 +119,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
       if (nextAnimState === 'walk') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
-          // Slow down leg movement so it matches phone speed
           actions.current.walk.setEffectiveTimeScale(0.8); 
           actions.current.idle.fadeOut(0.2);
         } 
@@ -148,7 +151,6 @@ function Environment() {
   
   const clonedFloor = useMemo(() => {
     const clone = scene.clone();
-    // CRITICAL FIX: Make the environment model invisible to raycasts so taps pierce through it!
     clone.traverse(child => {
       if (child.isMesh) child.raycast = () => null; 
     });
@@ -170,11 +172,11 @@ function ConservationCrate({ position, onDrop }) {
 
   return (
     <group position={position}>
-      {/* Tap the huge invisible hitbox in AR to trigger interaction */}
+      {/* Ultimate Tap Net: Covers XR select, mouse clicks, and screen touches */}
       <Interactive onSelect={onDrop}>
-        <mesh position={[0, 0.4, 0]}>
-          <boxGeometry args={[1.5, 1.5, 1.5]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        <mesh position={[0, 0.5, 0]} onClick={(e) => { e.stopPropagation(); onDrop(); }} onPointerDown={(e) => { e.stopPropagation(); onDrop(); }}>
+          <boxGeometry args={[2.0, 2.0, 2.0]} />
+          <meshBasicMaterial transparent opacity={0.01} depthWrite={false} colorWrite={false} />
         </mesh>
         <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
       </Interactive>
@@ -189,11 +191,11 @@ function GarbageItem({ type, position, onPickUp }) {
 
   return (
     <group position={position}>
-      {/* Tap the invisible hitbox in AR to trigger interaction */}
+      {/* Ultimate Tap Net: Covers XR select, mouse clicks, and screen touches */}
       <Interactive onSelect={onPickUp}>
-        <mesh position={[0, 0.2, 0]}>
-          <boxGeometry args={[0.8, 0.8, 0.8]} />
-          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        <mesh position={[0, 0.5, 0]} onClick={(e) => { e.stopPropagation(); onPickUp(); }} onPointerDown={(e) => { e.stopPropagation(); onPickUp(); }}>
+          <boxGeometry args={[1.5, 1.5, 1.5]} />
+          <meshBasicMaterial transparent opacity={0.01} depthWrite={false} colorWrite={false} />
         </mesh>
         <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
       </Interactive>
@@ -428,7 +430,7 @@ export default function App() {
 
         {gameState === 'MENU' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
-            <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
+            <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>POLAR PATROL</h1>
             <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup Mission</p>
             
             <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
@@ -446,7 +448,6 @@ export default function App() {
 
         {gameState === 'GAMEOVER' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
-            {/* Optimized stacked text for GAMEOVER heading */}
             <h1 style={{ fontSize: '36px', lineHeight: '1.1', marginBottom: '15px', color: '#38bdf8', textShadow: '0 2px 10px rgba(56, 189, 248, 0.4)' }}>
               MISSION<br/>COMPLETE!
             </h1>
@@ -457,7 +458,6 @@ export default function App() {
               <div style={{ fontSize: '14px', color: '#cbd5e1' }}>Pieces of Plastic Secured</div>
             </div>
 
-            {/* Combined end state UI with FINISH/MENU button */}
             <div style={{ display: 'flex', gap: '15px', flexDirection: 'column', width: '100%', maxWidth: '250px' }}>
               <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '14px 20px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
                 PLAY AGAIN
@@ -469,16 +469,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Thank You State with explicit CLOSE/EXIT button */}
         {gameState === 'THANKYOU' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#0f172a', color: '#fff', fontFamily: 'sans-serif', padding: '30px', textAlign: 'center', pointerEvents: 'auto' }}>
             <h1 style={{ fontSize: '38px', marginBottom: '20px', color: '#4ade80' }}>Habitat Secured!</h1>
             <p style={{ fontSize: '18px', color: '#cbd5e1', maxWidth: '450px', lineHeight: '1.6', marginBottom: '40px' }}>
-              Emperor penguins rely on clean, stable sea ice to raise their chicks. By removing plastic debris from the floe, you helped keep ICY's home pristine and safe. Thank you for playing!
+              Emperor penguins rely on clean, stable sea ice to raise their chicks. By removing plastic debris from the floe, you helped keep the home pristine and safe. Thank you for playing!
             </p>
             <div style={{ width: '60px', height: '4px', background: '#4ade80', borderRadius: '2px', opacity: 0.5, marginBottom: '40px' }}></div>
             
-            {/* Added standard Close/Exit button to main menu */}
             <button onClick={handlePlayAgain} style={{ background: 'transparent', border: '2px solid #4ade80', color: '#fff', padding: '12px 35px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
               MAIN MENU
             </button>
