@@ -1,19 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, Interactive } from '@react-three/xr'; // Critical AR imports
-import { useAnimations } from '@react-three/drei';
+import { useGLTF, useAnimations } from '@react-three/drei'; // useGLTF goes back here!
+import { Interactive } from '@react-three/xr'; // Interactive stays here safely
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
 // --- 1. CONFIGURATION & SCALES ---
-// Tweak these numbers if your cans are still too small or the bag is too big!
 const SCALES = {
   PENGUIN: 0.15,
-  CRATE: 0.0015,     // Your exact fix
+  CRATE: 0.0015,
   ITEMS: {
-    "Blue Soda": 0.5, // Upped from 0.08
-    "Green Soda": 0.5, // Upped from 0.08
-    "Plastic Bag": 0.08 // Kept the same since it was visible
+    "Blue Soda": 0.5,
+    "Green Soda": 0.5,
+    "Plastic Bag": 0.08
   }
 };
 
