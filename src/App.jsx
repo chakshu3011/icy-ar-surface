@@ -6,18 +6,17 @@ import { SkeletonUtils } from 'three-stdlib';
 
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
-  PENGUIN: 0.35,       
-  CRATE: 0.008,        
+  PENGUIN: 0.38,       
+  CRATE: 0.009,        
   ITEMS: {
-    "Blue Soda": 1.2,   
-    "Green Soda": 1.2,  
+    "Blue Soda": 1.3,   
+    "Green Soda": 1.3,  
     "Plastic Bag": 0.15 
   }
 };
 
 const MODELS = {
   PENGUIN: "/models/penguin_chick.glb",
-  ENVIRONMENT: "/models/ice_world.glb",
   CRATE: "/models/crate.glb",
   ITEMS: {
     "Blue Soda": "/models/blue_soda_can.glb",
@@ -27,7 +26,6 @@ const MODELS = {
 };
 
 useGLTF.preload(MODELS.PENGUIN);
-useGLTF.preload(MODELS.ENVIRONMENT);
 useGLTF.preload(MODELS.CRATE);
 useGLTF.preload(MODELS.ITEMS["Blue Soda"]);
 useGLTF.preload(MODELS.ITEMS["Green Soda"]);
@@ -45,7 +43,7 @@ function XRManager({ session }) {
   return null;
 }
 
-// --- OVER-THE-SHOULDER & MOVEMENT ENGINE ---
+// --- MOTION & BEHAVIOUR ENGINE ---
 function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PENGUIN);
@@ -82,15 +80,15 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
     if (!visible || !group.current) return;
     mixer.update(delta); 
     
-    // 1. POSITIONING: Pushed out to -1.8 so it doesn't clip into the camera
-    const targetPosition = new THREE.Vector3(0, 0, -1.8);
+    // Position 1.5 meters directly ahead of the camera perspective
+    const targetPosition = new THREE.Vector3(0, 0, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     
-    // Lock to floor
-    targetPosition.y = 0.02; // Tiny lift so feet don't clip the mathematical floor
-    group.current.position.lerp(targetPosition, delta * 6.0); // Slightly slower lerp for smoothness
+    // Absolute floor locking
+    targetPosition.y = 0.001; 
+    group.current.position.lerp(targetPosition, delta * 7.0);
     
-    // 2. ORIENTATION
+    // Safety check orientation framework to stop NaN math freezes
     const cameraForward = new THREE.Vector3();
     camera.getWorldDirection(cameraForward);
     cameraForward.y = 0; 
@@ -103,7 +101,7 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
 
     onPenguinUpdate(group.current.position.clone());
 
-    // 3. MOVEMENT DETECTION
+    // Movement animation tracking
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.0015; 
     const nextAnimState = isMoving ? 'walk' : 'idle';
@@ -139,59 +137,78 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
 
   return (
     <group ref={group} visible={visible}>
-      <group rotation={[0, 0, 0]}>
-        <primitive object={clonedScene} scale={SCALES.PENGUIN} />
-      </group>
+      <primitive object={clonedScene} scale={SCALES.PENGUIN} />
     </group>
   );
 }
 
+// GUARANTEED 100% FLAT ENVIRONMENT SURFACE
 function Environment() {
-  const { scene } = useGLTF(MODELS.ENVIRONMENT);
-  const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
-
   return (
     <group>
-      <ambientLight intensity={1.2} color="#ffffff" />
-      <directionalLight position={[5, 10, 5]} intensity={1.5} color="#fffcf2" />
-      {/* Lowered Y to -0.25 to prevent bumpy terrain from swallowing items */}
-      <primitive object={clonedScene} position={[0, -0.25, -1.5]} scale={[1.2, 1.2, 1.2]} />
+      <ambientLight intensity={1.4} color="#ffffff" />
+      <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" />
+      
+      {/* Dynamic programmatic perfectly flat ice floor disk */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.001, 0]}>
+        <circleGeometry args={[30, 32]} />
+        <meshStandardMaterial 
+          color="#e0f2fe" 
+          roughness={0.1} 
+          metalness={0.05} 
+          transparent
+          opacity={0.5}
+        />
+      </mesh>
+      
+      {/* Navigation grid helper to show spatial progression */}
+      <gridHelper args={[60, 60, '#38bdf8', '#bae6fd']} position={[0, 0, 0]} />
     </group>
   );
 }
 
+// LARGE INVISIBLE TARGET BOX FOR EASY TAPPING
 function ConservationCrate({ position, onDrop }) {
   const { scene } = useGLTF(MODELS.CRATE);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
 
   return (
-    <primitive 
-      object={clonedScene} 
-      position={position} 
-      scale={SCALES.CRATE} 
-      onPointerDown={(e) => {
-        e.stopPropagation(); 
-        onDrop();
-      }} 
-    />
+    <group position={position}>
+      {/* Clear tap hitbox - 0.8 meter volume cube */}
+      <mesh 
+        onPointerDown={(e) => {
+          e.stopPropagation(); 
+          onDrop();
+        }}
+      >
+        <boxGeometry args={[0.8, 0.8, 0.8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <primitive object={clonedScene} scale={SCALES.CRATE} position={[0, 0, 0]} />
+    </group>
   );
 }
 
+// LARGE INVISIBLE TARGET BOX FOR EASY TAPPING
 function GarbageItem({ type, position, onPickUp }) {
   const { scene } = useGLTF(MODELS.ITEMS[type]);
   const clonedScene = useMemo(() => SkeletonUtils.clone(scene), [scene]);
   const itemScale = SCALES.ITEMS[type] || 0.1;
 
   return (
-    <primitive 
-      object={clonedScene} 
-      position={position} 
-      scale={itemScale} 
-      onPointerDown={(e) => {
-        e.stopPropagation(); 
-        onPickUp();
-      }} 
-    />
+    <group position={position}>
+      {/* Expanded target hitbox - 0.5 meter tap cushion */}
+      <mesh 
+        onPointerDown={(e) => {
+          e.stopPropagation(); 
+          onPickUp();
+        }}
+      >
+        <boxGeometry args={[0.5, 0.5, 0.5]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <primitive object={clonedScene} scale={itemScale} position={[0, 0, 0]} />
+    </group>
   );
 }
 
@@ -203,7 +220,7 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  const penguinPosRef = useRef(new THREE.Vector3(0, 0, -1.8));
+  const penguinPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
   
   const ambienceAudio = useRef(null);
   const chirpAudio = useRef(null);
@@ -241,6 +258,9 @@ export default function App() {
     if (gameState === 'PLAYING' && timeLeft > 0) {
       timer = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     } else if (timeLeft === 0 && gameState === 'PLAYING') {
+      if (xrSession) {
+        xrSession.end().catch(() => {});
+      }
       setGameState('GAMEOVER');
       if (ambienceAudio.current) ambienceAudio.current.pause();
       if (footstepsAudio.current) footstepsAudio.current.pause();
@@ -248,7 +268,6 @@ export default function App() {
         chirpAudio.current.currentTime = 0;
         chirpAudio.current.play().catch(() => {});
       }
-      if (xrSession) xrSession.end(); 
     }
     return () => clearInterval(timer);
   }, [gameState, timeLeft, xrSession]);
@@ -257,13 +276,13 @@ export default function App() {
     const itemTypes = Object.keys(MODELS.ITEMS);
     const generated = Array.from({ length: 5 }).map((_, i) => {
       const angle = Math.random() * Math.PI * 2;
-      const radius = 1.5 + Math.random() * 2.0; 
+      const radius = 1.2 + Math.random() * 1.8; 
       return {
         id: Date.now() + i,
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          0.05, // Lifted slightly off the mathematical floor
+          0.02, // Sitting cleanly on flat layout
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -296,6 +315,8 @@ export default function App() {
         domOverlay: { root: document.getElementById('xr-overlay') || document.body }
       });
       
+      // Complete state purification for restart tracking consistency
+      penguinPosRef.current.set(0, 0, -1.5);
       setXrSession(session);
       setScore(0);
       setCarriedItem(null);
@@ -354,13 +375,13 @@ export default function App() {
 
       const itemTypes = Object.keys(MODELS.ITEMS);
       const angle = Math.random() * Math.PI * 2;
-      const radius = 1.5 + Math.random() * 2.0;
+      const radius = 1.2 + Math.random() * 1.8;
       setItems(prev => [...prev, { 
         id: Date.now(), 
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
           penguinPosRef.current.x + Math.cos(angle) * radius,
-          0.05,
+          0.02,
           penguinPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
@@ -419,9 +440,9 @@ export default function App() {
           
           <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
             <strong>Your Mission:</strong><br />
-            1. Scan the floor with your camera for a few seconds.<br/>
+            1. Scan the floor with your camera for 3-5 seconds to calibrate floor heights.<br/>
             2. Walk around your room to guide the penguin.<br/>
-            3. Tap the plastic waste on the ice to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
+            3. Tap plastic waste to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
           </div>
 
           <button onClick={initiateXRSession} style={{ background: '#fff', border: 'none', color: '#0284c7', padding: '16px 40px', fontSize: '18px', fontWeight: '900', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', textTransform: 'uppercase' }}>
@@ -443,10 +464,10 @@ export default function App() {
         </div>
       )}
 
-      <Canvas camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
-        <XRManager session={xrSession} />
-        
-        {gameState === 'PLAYING' && (
+      {/* DYNAMIC KEY SEPARATION GUARANTEES UNMOUNT/REMOUNT CYCLE PREVENTING MEMORY FREEZES */}
+      {gameState === 'PLAYING' && (
+        <Canvas key={xrSession ? xrSession.id : 'fresh-canvas'} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
+          <XRManager session={xrSession} />
           <React.Suspense fallback={null}>
             <Environment />
             <PlayerPenguin visible={true} footstepsAudio={footstepsAudio} onPenguinUpdate={updatePenguinPosition} />
@@ -461,8 +482,8 @@ export default function App() {
               />
             ))}
           </React.Suspense>
-        )}
-      </Canvas>
+        </Canvas>
+      )}
     </div>
   );
 }
