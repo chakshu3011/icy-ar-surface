@@ -6,12 +6,12 @@ import { SkeletonUtils } from 'three-stdlib';
 
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
-  PENGUIN: 0.35,       // More than doubled in size
-  CRATE: 0.008,        // Massively increased so it is easy to tap
+  PENGUIN: 0.35,       
+  CRATE: 0.008,        
   ITEMS: {
-    "Blue Soda": 1.2,   // Tripled in size
-    "Green Soda": 1.2,  // Tripled in size
-    "Plastic Bag": 0.15 // Shrunk down to more realistic proportions
+    "Blue Soda": 1.2,   
+    "Green Soda": 1.2,  
+    "Plastic Bag": 0.15 
   }
 };
 
@@ -53,7 +53,6 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
   const mixer = useMemo(() => new THREE.AnimationMixer(clonedScene), [clonedScene]);
   const { camera } = useThree();
   
-  // Movement & Animation tracking
   const prevCamPos = useRef(new THREE.Vector3());
   const actions = useRef({});
   const animStateRef = useRef('idle');
@@ -83,20 +82,19 @@ function PlayerPenguin({ visible, footstepsAudio, onPenguinUpdate }) {
     if (!visible || !group.current) return;
     mixer.update(delta); 
     
-    // 1. POSITIONING: Y=0 keeps it on the physical floor
-    const targetPosition = new THREE.Vector3(0, 0, -1.3);
+    // 1. POSITIONING: Pushed out to -1.8 so it doesn't clip into the camera
+    const targetPosition = new THREE.Vector3(0, 0, -1.8);
     targetPosition.applyMatrix4(camera.matrixWorld);
     
-    // Lock the height strictly to the floor to prevent floating
-    targetPosition.y = 0; 
-    group.current.position.lerp(targetPosition, delta * 8.0);
+    // Lock to floor
+    targetPosition.y = 0.02; // Tiny lift so feet don't clip the mathematical floor
+    group.current.position.lerp(targetPosition, delta * 6.0); // Slightly slower lerp for smoothness
     
-    // 2. ORIENTATION (WITH CRASH FIX)
+    // 2. ORIENTATION
     const cameraForward = new THREE.Vector3();
     camera.getWorldDirection(cameraForward);
     cameraForward.y = 0; 
     
-    // Prevent the render loop math crash when looking straight down
     if (cameraForward.lengthSq() > 0.001) {
       cameraForward.normalize();
       const lookTarget = new THREE.Vector3().copy(group.current.position).add(cameraForward);
@@ -156,8 +154,8 @@ function Environment() {
     <group>
       <ambientLight intensity={1.2} color="#ffffff" />
       <directionalLight position={[5, 10, 5]} intensity={1.5} color="#fffcf2" />
-      {/* Placed at Y=0 so it aligns with local-floor */}
-      <primitive object={clonedScene} position={[0, 0, -1.5]} scale={[1.2, 1.2, 1.2]} />
+      {/* Lowered Y to -0.25 to prevent bumpy terrain from swallowing items */}
+      <primitive object={clonedScene} position={[0, -0.25, -1.5]} scale={[1.2, 1.2, 1.2]} />
     </group>
   );
 }
@@ -205,10 +203,8 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
-  // Y=0 baseline
-  const penguinPosRef = useRef(new THREE.Vector3(0, 0, -1.3));
+  const penguinPosRef = useRef(new THREE.Vector3(0, 0, -1.8));
   
-  // Audio Refs
   const ambienceAudio = useRef(null);
   const chirpAudio = useRef(null);
   const collectAudio = useRef(null);
@@ -261,13 +257,13 @@ export default function App() {
     const itemTypes = Object.keys(MODELS.ITEMS);
     const generated = Array.from({ length: 5 }).map((_, i) => {
       const angle = Math.random() * Math.PI * 2;
-      const radius = 1.2 + Math.random() * 2.0; 
+      const radius = 1.5 + Math.random() * 2.0; 
       return {
         id: Date.now() + i,
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          0, // Placed exactly on the floor
+          0.05, // Lifted slightly off the mathematical floor
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -358,13 +354,13 @@ export default function App() {
 
       const itemTypes = Object.keys(MODELS.ITEMS);
       const angle = Math.random() * Math.PI * 2;
-      const radius = 1.2 + Math.random() * 2.0;
+      const radius = 1.5 + Math.random() * 2.0;
       setItems(prev => [...prev, { 
         id: Date.now(), 
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
           penguinPosRef.current.x + Math.cos(angle) * radius,
-          0,
+          0.05,
           penguinPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
@@ -423,7 +419,9 @@ export default function App() {
           
           <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
             <strong>Your Mission:</strong><br />
-            Walk around your room to guide the penguin. Tap the plastic waste on the ice to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
+            1. Scan the floor with your camera for a few seconds.<br/>
+            2. Walk around your room to guide the penguin.<br/>
+            3. Tap the plastic waste on the ice to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
           </div>
 
           <button onClick={initiateXRSession} style={{ background: '#fff', border: 'none', color: '#0284c7', padding: '16px 40px', fontSize: '18px', fontWeight: '900', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', textTransform: 'uppercase' }}>
