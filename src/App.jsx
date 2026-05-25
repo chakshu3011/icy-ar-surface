@@ -7,19 +7,18 @@ import { SkeletonUtils } from 'three-stdlib';
 
 // --- 1. CONFIGURATION & SCALES ---
 const SCALES = {
-  PLAYER: 1.0,        
+  PLAYER: 0.25,        // Shrank the man down to a realistic AR size
   CRATE: 0.009,        
   ITEMS: {
-    "Blue Soda": 1.3,   
-    "Green Soda": 1.3,  
+    "Blue Soda": 0.15,  // Shrank the giant sodas down to floor-trash size
+    "Green Soda": 0.15,  
     "Plastic Bag": 0.15 
   }
 };
 
-// CRITICAL FIX: These paths now perfectly match your VS Code file explorer screenshot
 const MODELS = {
   PLAYER: "/models/man.glb",
-  ICE_FLOOR: "/models/ice_texture.glb", // Fixed from ice_floor to ice_texture
+  ICE_FLOOR: "/models/ice_texture.glb", 
   CRATE: "/models/crate.glb",
   ITEMS: {
     "Blue Soda": "/models/blue_soda_can.glb",
@@ -61,12 +60,14 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
 
   useEffect(() => {
     if (animations && animations.length > 0) {
-      const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
-      const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
+      // Look for the exact animation names you provided
+      const idleClip = animations.find(a => a.name === 'pose' || a.name.toLowerCase() === 'pose');
+      const walkClip = animations.find(a => a.name === 'walking' || a.name.toLowerCase() === 'walking');
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
+      // Fallback just in case
       if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
@@ -85,8 +86,10 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     
     const targetPosition = new THREE.Vector3(0, -0.4, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
+    targetPosition.y = 0.001; 
     
-    group.current.position.lerp(targetPosition, delta * 7.0);
+    // Slowed down the follow speed from 7.0 to 4.0 so it feels more like walking than snapping
+    group.current.position.lerp(targetPosition, delta * 4.0);
     
     const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     cameraForward.y = 0; 
@@ -97,7 +100,7 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     onPlayerUpdate(group.current.position.clone());
 
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
-    const isMoving = camSpeed > 0.0015; 
+    const isMoving = camSpeed > 0.002; // Slightly higher threshold to prevent "twitch walking"
     const nextAnimState = isMoving ? 'walk' : 'idle';
 
     if (animStateRef.current !== nextAnimState) {
@@ -106,10 +109,10 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
       if (nextAnimState === 'walk') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
+          // Slow down the leg movement so he doesn't look like he's sprinting
+          actions.current.walk.setEffectiveTimeScale(0.8); 
           actions.current.idle.fadeOut(0.2);
-        } else if (actions.current.idle) { 
-           actions.current.idle.setEffectiveTimeScale(1.5);
-        }
+        } 
         if (footstepsAudio.current && footstepsAudio.current.paused) {
           footstepsAudio.current.play().catch(()=>{});
         }
@@ -117,8 +120,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
         if (actions.current.idle && actions.current.walk) {
           actions.current.idle.reset().fadeIn(0.2).play();
           actions.current.walk.fadeOut(0.2);
-        } else if (actions.current.idle) {
-           actions.current.idle.setEffectiveTimeScale(0.5);
         }
         if (footstepsAudio.current && !footstepsAudio.current.paused) {
           footstepsAudio.current.pause();
@@ -210,7 +211,6 @@ export default function App() {
     winAudio.current = new Audio("/audios/win.mp3");
     winAudio.current.volume = 1.0;
 
-    // NOTE: Make sure collect.mp3 is actually in your public/audios folder!
     collectAudio.current = new Audio("/audios/collect.mp3");
     collectAudio.current.volume = 0.8;
 
@@ -258,7 +258,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          -0.4, 
+          0.02, 
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -356,7 +356,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
           playerPosRef.current.x + Math.cos(angle) * radius,
-          -0.4,
+          0.02,
           playerPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
@@ -372,9 +372,16 @@ export default function App() {
   };
 
   return (
-    <div id="xr-overlay" style={{ width: '100vw', height: '100vh', position: 'relative' }}>
+    <div id="xr-overlay" style={{ 
+      width: '100vw', 
+      height: '100vh', 
+      position: 'absolute', 
+      inset: 0,
+      overflow: 'hidden', 
+      background: gameState === 'PLAYING' ? 'transparent' : '#f8fafc',
+      pointerEvents: gameState === 'PLAYING' ? 'none' : 'auto' 
+    }}>
       
-      {/* UI LAYER - pointerEvents: none guarantees it never blocks 3D taps */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
         
         {assetsAreLoading && gameState === 'PLAYING' && (
@@ -443,7 +450,6 @@ export default function App() {
         )}
       </div>
 
-      {/* CANVAS LAYER */}
       <Canvas style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: gameState === 'PLAYING' ? 'auto' : 'none' }} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
         <XRManager session={xrSession} />
         <React.Suspense fallback={null}>
