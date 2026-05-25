@@ -1,18 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { useGLTF, useProgress } from '@react-three/drei';
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
 // --- CONFIGURATION & SCALES ---
 const SCALES = {
-  PLAYER: 1.0, // <-- Adjust this if your man.glb is too big or too small
-  CRATE: 0.01,        
+  PLAYER: 1.0,        // Adjust this if your man.glb spawns too large or small
+  CRATE: 0.009,        
   ITEMS: {
     "Blue Soda": 1.3,   
-    "Green Soda": 0.1,  
-    "Plastic Bag": 0.1,
-    "Plastic Bottle": 0.1
+    "Green Soda": 1.3,  
+    "Plastic Bag": 0.15 
   }
 };
 
@@ -23,18 +22,18 @@ const MODELS = {
   ITEMS: {
     "Blue Soda": "/models/blue_soda_can.glb",
     "Green Soda": "/models/green_soda_can.glb",
-    "Plastic Bag": "/models/plastic_bag.glb",
-    "Plastic Bottle": "/models/plastic_bottle.glb"
+    "Plastic Bag": "/models/plastic_bag.glb"
   }
 };
 
+// Preload assets cleanly to prepare the pipeline
 useGLTF.preload(MODELS.PLAYER);
 useGLTF.preload(MODELS.ICE_FLOOR);
 useGLTF.preload(MODELS.CRATE);
 useGLTF.preload(MODELS.ITEMS["Blue Soda"]);
 useGLTF.preload(MODELS.ITEMS["Green Soda"]);
 useGLTF.preload(MODELS.ITEMS["Plastic Bag"]);
-useGLTF.preload(MODELS.ITEMS["Plastic Bottle"]);
+
 function XRManager({ session }) {
   const { gl } = useThree();
   useEffect(() => {
@@ -57,17 +56,18 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
   
   const prevCamPos = useRef(new THREE.Vector3());
   const actions = useRef({});
-  const animStateRef = useRef('pose');
+  const animStateRef = useRef('idle');
 
   useEffect(() => {
     if (visible && animations && animations.length > 0) {
-      const idleClip = animations.find(a => a.name.toLowerCase().includes('pose'));
-      const walkClip = animations.find(a => a.name.toLowerCase().includes('walking') || a.name.toLowerCase().includes('running'));
+      const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
+      const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
 
       if (idleClip) actions.current.idle = mixer.clipAction(idleClip);
       if (walkClip) actions.current.walk = mixer.clipAction(walkClip);
 
-      if (!idleClip && !walkClip) {
+      // Ultimate safety fallback if named strings don't match
+      if (!idleClip && !walkClip && animations[0]) {
         actions.current.idle = mixer.clipAction(animations[0]);
         if (animations.length > 1) {
           actions.current.walk = mixer.clipAction(animations[1]);
@@ -88,11 +88,10 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
     const targetPosition = new THREE.Vector3(0, 0, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     
-    // Absolute floor locking
+    // Pure baseline absolute floor locking
     targetPosition.y = 0.001; 
     group.current.position.lerp(targetPosition, delta * 7.0);
     
-    // Safety check orientation framework to stop NaN math freezes
     const cameraForward = new THREE.Vector3();
     camera.getWorldDirection(cameraForward);
     cameraForward.y = 0; 
@@ -105,15 +104,15 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
 
     onPlayerUpdate(group.current.position.clone());
 
-    // Movement animation tracking
+    // Movement animation triggers
     const camSpeed = camera.position.distanceTo(prevCamPos.current);
     const isMoving = camSpeed > 0.0015; 
-    const nextAnimState = isMoving ? 'walking' : 'pose';
+    const nextAnimState = isMoving ? 'walk' : 'idle';
 
     if (animStateRef.current !== nextAnimState) {
       animStateRef.current = nextAnimState;
       
-      if (nextAnimState === 'walking') {
+      if (nextAnimState === 'walk') {
         if (actions.current.walk && actions.current.idle) {
           actions.current.walk.reset().fadeIn(0.2).play();
           actions.current.idle.fadeOut(0.2);
@@ -146,17 +145,16 @@ function PlayerCharacter({ visible, footstepsAudio, onPlayerUpdate }) {
   );
 }
 
-// NEW SOLID ICE FLOOR ENVIRONMENT
+// FIXED ENVIRONMENT LOOP - NO MORE SKELETONUTlLS ON STATIC MODEL
 function Environment() {
   const { scene } = useGLTF(MODELS.ICE_FLOOR);
-  const clonedFloor = useMemo(() => SkeletonUtils.clone(scene), [scene]);
+  // Safe native Three.js cloning for a pure static asset layout
+  const clonedFloor = useMemo(() => scene.clone(), [scene]);
 
   return (
     <group>
       <ambientLight intensity={1.4} color="#ffffff" />
       <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" />
-      
-      {/* Renders your newly uploaded ice floor model */}
       <primitive object={clonedFloor} position={[0, -0.001, 0]} scale={[1, 1, 1]} />
     </group>
   );
@@ -211,6 +209,9 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(60); 
   const [xrSession, setXrSession] = useState(null);
 
+  // Read loading states directly from the Canvas setup
+  const { active: assetsAreLoading, progress: assetProgress } = useProgress();
+
   const playerPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
   
   const ambienceAudio = useRef(null);
@@ -224,7 +225,7 @@ export default function App() {
     ambienceAudio.current.loop = true;
     ambienceAudio.current.volume = 0.4;
 
-    // Swapped chirp for the win screen audio
+    // Swapped out penguin chirp for new win audio track
     winAudio.current = new Audio("/audios/win.mp3");
     winAudio.current.volume = 1.0;
 
@@ -257,7 +258,6 @@ export default function App() {
       if (ambienceAudio.current) ambienceAudio.current.pause();
       if (footstepsAudio.current) footstepsAudio.current.pause();
       
-      // Play win audio when the game finishes
       if (winAudio.current) {
         winAudio.current.currentTime = 0;
         winAudio.current.play().catch(() => {});
@@ -402,6 +402,17 @@ export default function App() {
       pointerEvents: gameState === 'PLAYING' ? 'none' : 'auto' 
     }}>
       
+      {/* HIGH VISIBILITY LOADING ENGINE OVERLAY */}
+      {assetsAreLoading && gameState === 'PLAYING' && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 100, background: '#0f172a', color: '#fff', fontFamily: 'sans-serif' }}>
+          <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', letterSpacing: '1px' }}>LOADING ICE ENVIRONMENTS</div>
+          <div style={{ width: '200px', height: '6px', background: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
+            <div style={{ width: `${assetProgress}%`, height: '100%', background: '#38bdf8', transition: 'width 0.2s ease-out' }} />
+          </div>
+          <div style={{ marginTop: '8px', color: '#94a3b8', fontSize: '13px' }}>{Math.round(assetProgress)}% Complete</div>
+        </div>
+      )}
+
       {gameState === 'PLAYING' && (
         <>
           <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', left: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '12px 16px', borderRadius: '12px', color: '#fff', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
@@ -429,7 +440,7 @@ export default function App() {
       {gameState === 'MENU' && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 20, background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
           <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
-          <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup</p>
+          <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup Mission</p>
           
           <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
             <strong>Your Mission:</strong><br />
