@@ -5,7 +5,7 @@ import { Interactive } from '@react-three/xr';
 import * as THREE from 'three';
 import { SkeletonUtils } from 'three-stdlib';
 
-// --- CONFIGURATION & SCALES ---
+// --- 1. CONFIGURATION & SCALES ---
 const SCALES = {
   PLAYER: 1.0,        
   CRATE: 0.009,        
@@ -16,9 +16,10 @@ const SCALES = {
   }
 };
 
+// CRITICAL FIX: These paths now perfectly match your VS Code file explorer screenshot
 const MODELS = {
   PLAYER: "/models/man.glb",
-  ICE_FLOOR: "/models/ice_floor.glb",
+  ICE_FLOOR: "/models/ice_texture.glb", // Fixed from ice_floor to ice_texture
   CRATE: "/models/crate.glb",
   ITEMS: {
     "Blue Soda": "/models/blue_soda_can.glb",
@@ -46,7 +47,7 @@ function XRManager({ session }) {
   return null;
 }
 
-// --- MOTION & BEHAVIOUR ENGINE ---
+// --- 2. MOTION & BEHAVIOUR ENGINE ---
 function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
   const group = useRef();
   const { scene, animations } = useGLTF(MODELS.PLAYER);
@@ -59,7 +60,6 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
   const animStateRef = useRef('idle');
 
   useEffect(() => {
-    // Perpetual Motion Fix: Never stop the mixer to prevent 2nd-trial freezes
     if (animations && animations.length > 0) {
       const idleClip = animations.find(a => a.name.toLowerCase().includes('idle'));
       const walkClip = animations.find(a => a.name.toLowerCase().includes('walk') || a.name.toLowerCase().includes('run'));
@@ -83,21 +83,16 @@ function PlayerCharacter({ footstepsAudio, onPlayerUpdate }) {
     mixer.update(delta); 
     if (!group.current) return;
     
-    const targetPosition = new THREE.Vector3(0, 0, -1.5);
+    const targetPosition = new THREE.Vector3(0, -0.4, -1.5);
     targetPosition.applyMatrix4(camera.matrixWorld);
     
-    targetPosition.y = 0.001; 
     group.current.position.lerp(targetPosition, delta * 7.0);
     
-    const cameraForward = new THREE.Vector3();
-    camera.getWorldDirection(cameraForward);
+    const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     cameraForward.y = 0; 
-    
-    if (cameraForward.lengthSq() > 0.001) {
-      cameraForward.normalize();
-      const lookTarget = new THREE.Vector3().copy(group.current.position).add(cameraForward);
-      group.current.lookAt(lookTarget);
-    }
+    cameraForward.normalize();
+    const lookTarget = group.current.position.clone().add(cameraForward);
+    group.current.lookAt(lookTarget);
 
     onPlayerUpdate(group.current.position.clone());
 
@@ -149,7 +144,7 @@ function Environment() {
     <group>
       <ambientLight intensity={1.4} color="#ffffff" />
       <directionalLight position={[5, 10, 5]} intensity={1.2} color="#fffcf2" />
-      <primitive object={clonedFloor} position={[0, -0.001, 0]} scale={[1, 1, 1]} />
+      <primitive object={clonedFloor} position={[0, -1.4, 0]} scale={[1, 1, 1]} />
     </group>
   );
 }
@@ -160,7 +155,6 @@ function ConservationCrate({ position, onDrop }) {
 
   return (
     <group position={position}>
-      {/* AR-Safe Interaction with large invisible hitbox */}
       <Interactive onSelect={onDrop}>
         <mesh position={[0, 0.4, 0]}>
           <boxGeometry args={[1.5, 1.5, 1.5]} />
@@ -179,7 +173,6 @@ function GarbageItem({ type, position, onPickUp }) {
 
   return (
     <group position={position}>
-      {/* AR-Safe Interaction with large invisible hitbox */}
       <Interactive onSelect={onPickUp}>
         <mesh position={[0, 0.2, 0]}>
           <boxGeometry args={[0.8, 0.8, 0.8]} />
@@ -191,6 +184,7 @@ function GarbageItem({ type, position, onPickUp }) {
   );
 }
 
+// --- 3. MAIN APP ---
 export default function App() {
   const [gameState, setGameState] = useState('MENU'); 
   const [items, setItems] = useState([]);
@@ -200,7 +194,6 @@ export default function App() {
   const [xrSession, setXrSession] = useState(null);
 
   const { active: assetsAreLoading, progress: assetProgress } = useProgress();
-
   const playerPosRef = useRef(new THREE.Vector3(0, 0, -1.5));
   
   const ambienceAudio = useRef(null);
@@ -217,6 +210,7 @@ export default function App() {
     winAudio.current = new Audio("/audios/win.mp3");
     winAudio.current.volume = 1.0;
 
+    // NOTE: Make sure collect.mp3 is actually in your public/audios folder!
     collectAudio.current = new Audio("/audios/collect.mp3");
     collectAudio.current.volume = 0.8;
 
@@ -264,7 +258,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)],
         pos: [
           centerPos.x + Math.cos(angle) * radius,
-          0.02, 
+          -0.4, 
           centerPos.z + Math.sin(angle) * radius
         ]
       };
@@ -362,7 +356,7 @@ export default function App() {
         type: itemTypes[Math.floor(Math.random() * itemTypes.length)], 
         pos: [
           playerPosRef.current.x + Math.cos(angle) * radius,
-          0.02,
+          -0.4,
           playerPosRef.current.z + Math.sin(angle) * radius
         ]
       }]);
@@ -378,90 +372,85 @@ export default function App() {
   };
 
   return (
-    <div id="xr-overlay" style={{ 
-      width: '100vw', 
-      height: '100vh', 
-      position: 'absolute', 
-      inset: 0,
-      overflow: 'hidden', 
-      background: gameState === 'PLAYING' ? 'transparent' : '#f8fafc',
-      pointerEvents: gameState === 'PLAYING' ? 'none' : 'auto' 
-    }}>
+    <div id="xr-overlay" style={{ width: '100vw', height: '100vh', position: 'relative' }}>
       
-      {assetsAreLoading && gameState === 'PLAYING' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 100, background: '#0f172a', color: '#fff', fontFamily: 'sans-serif' }}>
-          <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', letterSpacing: '1px' }}>LOADING ICE ENVIRONMENTS</div>
-          <div style={{ width: '200px', height: '6px', background: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
-            <div style={{ width: `${assetProgress}%`, height: '100%', background: '#38bdf8', transition: 'width 0.2s ease-out' }} />
-          </div>
-          <div style={{ marginTop: '8px', color: '#94a3b8', fontSize: '13px' }}>{Math.round(assetProgress)}% Complete</div>
-        </div>
-      )}
-
-      {gameState === 'PLAYING' && (
-        <>
-          <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', left: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '12px 16px', borderRadius: '12px', color: '#fff', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '11px', color: '#94a3b8', marginBottom: '4px', letterSpacing: '0.5px' }}>CLEANUP PROGRESS</div>
-            <div style={{ color: '#38bdf8', fontSize: '22px', fontWeight: 'bold' }}>{score} XP</div>
-          </div>
-
-          <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', right: '20px', zIndex: 10, background: 'rgba(15, 23, 42, 0.85)', padding: '12px 24px', borderRadius: '12px', textAlign: 'center', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ color: timeLeft <= 10 ? '#ef4444' : '#fff', fontSize: '24px', fontWeight: 'bold' }}>
-              0:{timeLeft.toString().padStart(2, '0')}
+      {/* UI LAYER - pointerEvents: none guarantees it never blocks 3D taps */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 10 }}>
+        
+        {assetsAreLoading && gameState === 'PLAYING' && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#0f172a', color: '#fff', fontFamily: 'sans-serif', pointerEvents: 'auto' }}>
+            <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', letterSpacing: '1px' }}>LOADING ICE ENVIRONMENTS</div>
+            <div style={{ width: '200px', height: '6px', background: '#334155', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ width: `${assetProgress}%`, height: '100%', background: '#38bdf8', transition: 'width 0.2s ease-out' }} />
             </div>
+            <div style={{ marginTop: '8px', color: '#94a3b8', fontSize: '13px' }}>{Math.round(assetProgress)}% Complete</div>
           </div>
+        )}
 
-          <div style={{ position: 'absolute', bottom: 'calc(40px + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 10, background: carriedItem ? 'rgba(16, 185, 129, 0.95)' : 'rgba(15, 23, 42, 0.85)', padding: '15px 30px', borderRadius: '30px', color: '#fff', fontFamily: 'sans-serif', textAlign: 'center', border: '2px solid rgba(255,255,255,0.2)', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '280px' }}>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
-              {carriedItem ? `Carrying: ${carriedItem}` : "Hands Empty"}
+        {gameState === 'PLAYING' && !assetsAreLoading && (
+          <>
+            <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', left: '20px', background: 'rgba(15, 23, 42, 0.85)', padding: '12px 16px', borderRadius: '12px', color: '#fff', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ fontWeight: 'bold', fontSize: '11px', color: '#94a3b8', marginBottom: '4px', letterSpacing: '0.5px' }}>CLEANUP PROGRESS</div>
+              <div style={{ color: '#38bdf8', fontSize: '22px', fontWeight: 'bold' }}>{score} XP</div>
             </div>
-            <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
-              {carriedItem ? "Tap the Blue Crate to drop off!" : "Look around and tap garbage items!"}
+
+            <div style={{ position: 'absolute', top: 'max(20px, env(safe-area-inset-top))', right: '20px', background: 'rgba(15, 23, 42, 0.85)', padding: '12px 24px', borderRadius: '12px', textAlign: 'center', fontFamily: 'sans-serif', border: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ color: timeLeft <= 10 ? '#ef4444' : '#fff', fontSize: '24px', fontWeight: 'bold' }}>
+                0:{timeLeft.toString().padStart(2, '0')}
+              </div>
             </div>
+
+            <div style={{ position: 'absolute', bottom: 'calc(40px + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', background: carriedItem ? 'rgba(16, 185, 129, 0.95)' : 'rgba(15, 23, 42, 0.85)', padding: '15px 30px', borderRadius: '30px', color: '#fff', fontFamily: 'sans-serif', textAlign: 'center', border: '2px solid rgba(255,255,255,0.2)', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', width: '280px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                {carriedItem ? `Carrying: ${carriedItem}` : "Hands Empty"}
+              </div>
+              <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '4px' }}>
+                {carriedItem ? "Tap the Crate to drop off!" : "Look around and tap garbage items!"}
+              </div>
+            </div>
+          </>
+        )}
+
+        {gameState === 'MENU' && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
+            <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
+            <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup Mission</p>
+            
+            <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
+              <strong>Your Mission:</strong><br />
+              1. Scan the floor with your camera for 3-5 seconds.<br/>
+              2. Walk around your room to guide your character.<br/>
+              3. Tap plastic waste to collect it, then drop it inside the Crate!
+            </div>
+
+            <button onClick={initiateXRSession} style={{ background: '#fff', border: 'none', color: '#0284c7', padding: '16px 40px', fontSize: '18px', fontWeight: '900', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', textTransform: 'uppercase' }}>
+              Enter AR
+            </button>
           </div>
-        </>
-      )}
+        )}
 
-      {gameState === 'MENU' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 20, background: 'linear-gradient(135deg, #0ea5e9, #0284c7)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '42px', marginBottom: '8px', letterSpacing: '2px', fontWeight: '900', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>ICY SURFACE</h1>
-          <p style={{ color: '#e0f2fe', marginBottom: '25px', fontSize: '18px' }}>Habitat Cleanup Mission</p>
-          
-          <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '20px 30px', borderRadius: '12px', marginBottom: '35px', fontSize: '14px', color: '#f8fafc', maxWidth: '320px', lineHeight: '1.6', border: '1px solid rgba(255, 255, 255, 0.2)', backdropFilter: 'blur(10px)' }}>
-            <strong>Your Mission:</strong><br />
-            1. Scan the floor with your camera for 3-5 seconds to calibrate floor heights.<br/>
-            2. Walk around your room to guide your character.<br/>
-            3. Tap plastic waste to collect it, then drop it inside the Blue Crate! Clean up the surface in 60 seconds.
+        {gameState === 'GAMEOVER' && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center', pointerEvents: 'auto' }}>
+            <h1 style={{ fontSize: '48px', marginBottom: '10px', color: '#38bdf8' }}>MISSION COMPLETE!</h1>
+            <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '30px 50px', borderRadius: '16px', margin: '20px 0 35px 0', border: '1px solid rgba(255,255,255,0.1)' }}>
+              <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Total Cleanup XP</div>
+              <div style={{ fontSize: '56px', fontWeight: '900', color: '#4ade80' }}>{score}</div>
+            </div>
+            <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '16px 45px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
+              PLAY AGAIN
+            </button>
           </div>
+        )}
+      </div>
 
-          <button onClick={initiateXRSession} style={{ background: '#fff', border: 'none', color: '#0284c7', padding: '16px 40px', fontSize: '18px', fontWeight: '900', borderRadius: '30px', cursor: 'pointer', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', textTransform: 'uppercase' }}>
-            Enter AR
-          </button>
-        </div>
-      )}
-
-      {gameState === 'GAMEOVER' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', zIndex: 20, background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#fff', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '48px', marginBottom: '10px', color: '#38bdf8' }}>MISSION COMPLETE!</h1>
-          <div style={{ background: 'rgba(255, 255, 255, 0.05)', padding: '30px 50px', borderRadius: '16px', margin: '20px 0 35px 0', border: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Total Cleanup XP</div>
-            <div style={{ fontSize: '56px', fontWeight: '900', color: '#4ade80' }}>{score}</div>
-          </div>
-          <button onClick={handlePlayAgain} style={{ background: '#38bdf8', border: 'none', color: '#0f172a', padding: '16px 45px', fontSize: '16px', fontWeight: 'bold', borderRadius: '30px', cursor: 'pointer' }}>
-            PLAY AGAIN
-          </button>
-        </div>
-      )}
-
-      {/* FIXED: Canvas is permanently rendered so WebGL context stays alive 100% of the time */}
-      <Canvas camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
+      {/* CANVAS LAYER */}
+      <Canvas style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: gameState === 'PLAYING' ? 'auto' : 'none' }} camera={{ position: [0, 1.5, 0], fov: 70 }} gl={{ alpha: true }}>
         <XRManager session={xrSession} />
         <React.Suspense fallback={null}>
-          {/* We control visibility using a group flag to prevent component unmounting cache bugs */}
           <group visible={gameState === 'PLAYING'}>
             <Environment />
             <PlayerCharacter footstepsAudio={footstepsAudio} onPlayerUpdate={updatePlayerPosition} />
-            <ConservationCrate position={[0, 0, -2.0]} onDrop={handleDrop} />
+            <ConservationCrate position={[0, -0.4, -2.0]} onDrop={handleDrop} />
             
             {items.map((item) => (
               <GarbageItem 
